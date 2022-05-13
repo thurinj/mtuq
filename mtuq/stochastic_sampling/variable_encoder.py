@@ -30,10 +30,17 @@ class CMAESParameters:
         - ``'log'``: logarithmic scaling between lower_bound and upper_bound
         ..  Logarithmic map from [0,10] to [a,b], with `a` and `b` typically defining 3 to 4 orders of magnitudes ..
 
-    ``upper_bound`` (`float`): define the upper bound of the search space
+    ``initial`` (`float`): Define the initial value within the 0 to 10 bound. If None, that value is initialised at random.
+
+    ``repair`` (`float`): Define the boundary handling constraint method to deal with out of bound values (out of the 0 to 10 range). Default method is rand-based. See
+        - ``'rand-based'``: Redraw the out of bound mutants between the base vector (the CMA_ES.xmean used in draw_muants()) and the violated boundary. The base vector is the mean of the population.
+
+    ``projection`` (`method`): Assign a custom projection function to the state variable. The main use is to convert moment magnitude Mw to rho as in Tape and Tape 2015 uniform moment tensor parameterization.
+        -``'mtuq.util.math.to_rho()'``
+
 
     """
-    
+
     def __init__(self, name, lower_bound, upper_bound, scaling = 'linear', initial=None, repair='rand_based', projection=None, **kwargs):
         self.name = name # Name of the parameter, used for printing and saving to file names etc...
         if lower_bound > upper_bound:
