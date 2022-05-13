@@ -132,7 +132,7 @@ class parallel_CMA_ES(object):
         self.local_greens = db.get_greens_tensors(stations, self.origins)
         end_time = MPI.Wtime()
         if self.rank == 0:
-            print("Fetching and greens tensor: " + str(end_time-start_time))
+            print("Fetching greens tensor: " + str(end_time-start_time))
         start_time = MPI.Wtime()
         self.local_greens.convolve(wavelet)
         end_time = MPI.Wtime()
