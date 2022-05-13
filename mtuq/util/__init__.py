@@ -102,7 +102,7 @@ def iterable(arg):
     """ Simple list typecast
     """
     from mtuq.grid import Grid, UnstructuredGrid
-    if not isinstance(arg, (list, tuple, Grid, UnstructuredGrid)):
+    if not isinstance(arg, (list, tuple, Grid, UnstructuredGrid, np.ndarray)):
         return [arg]
     else:
         return arg
@@ -320,7 +320,7 @@ class ProgressCallback(object):
 def dataarray_idxmin(da):
     """ idxmin helper function
     """
-    # something similar to this has now been implemented in a beta version 
+    # something similar to this has now been implemented in a beta version
     # of xarray
     da = da.where(da==da.min(), drop=True).squeeze()
     if da.size > 1:
@@ -333,7 +333,7 @@ def dataarray_idxmin(da):
 def dataarray_idxmax(da):
     """ idxmax helper function
     """
-    # something similar to this has now been implemented in a beta version 
+    # something similar to this has now been implemented in a beta version
     # of xarray
     da = da.where(da==da.max(), drop=True).squeeze()
     if da.size > 1:
@@ -341,4 +341,3 @@ def dataarray_idxmax(da):
         while da.size > 1:
             da = da[0]
     return da.coords
-
