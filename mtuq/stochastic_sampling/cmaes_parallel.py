@@ -1,10 +1,10 @@
 import numpy as np
+import pandas as pd
 from mtuq.util.cmaes import *
 from mtuq.util.math import to_mij, to_rtp, to_rho
 from mtuq.grid.force import to_force
 import mpi4py.MPI as MPI
 from mtuq.greens_tensor import GreensTensor
-
 
 
 # class CMA_ES(object):
@@ -19,9 +19,11 @@ class parallel_CMA_ES(object):
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
 
+
         # Initialize parameters-tied variables.
-        # Variables are shared across all processes, but only self.rank = 0 matters
+        # Variables are initially shared across all processes, but only self.rank = 0 matters
         self._parameters = parameters_list
+        self._parameters_names = [parameter.name for parameter in parameters_list]
         self.n = len(self._parameters)
         self.xmean = np.asarray([[val.initial for val in self._parameters]]).T
         self.sigma = 1
@@ -32,13 +34,16 @@ class parallel_CMA_ES(object):
         elif len(parameters_list) == 6 or len(parameters_list) == 9:
             self.callback = to_mij
             self.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
+            self.mode = 'mt'
         elif len(parameters_list) == 3:
             self.callback = to_force
+            self.mode = 'force'
         # Parameter setting
         if not lmbda == None:
             self.lmbda = lmbda
         else:
             self.lmbda = 40
+
         self.mu = np.floor(self.lmbda/2)
         a = 1 # Original author uses 1/2 in tutorial and 1 in publication
         self.weights = np.array([np.log(self.mu+a) - np.log(np.arange(1, self.mu+1))]).T
@@ -54,6 +59,11 @@ class parallel_CMA_ES(object):
         self.acov = 2
         self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
         self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov*self.mueff/2))
+
+        # Defining 'holder' variable for post processing and plotting.
+        self._misfit_holder = np.zeros((self.lmbda,1))
+        self.mutants_logger_list = pd.DataFrame()
+        self.mean_logger_list = pd.DataFrame()
 
         # INITIALIZATION
         self.ps = np.zeros_like(self.xmean)
@@ -164,6 +174,7 @@ class parallel_CMA_ES(object):
         # Broadcast the gathered values and concatenate to return across processes.
         self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
         self.misfit_val = np.asarray(np.concatenate(self.misfit_val))
+        self._misfit_holder += self.misfit_val
         return self.misfit_val
 
     def gather_mutants(self):
@@ -181,11 +192,15 @@ class parallel_CMA_ES(object):
         else:
             self.transformed_mutants = None
 
+        self.mutants_logger_list = self.mutants_logger_list.append(
+                            self._datalogger(mean=False))
+
     def fitness_sort(self, misfit):
         # Sort by fitness
         if self.rank == 0:
             self.mutants = self.mutants[:,np.argsort(misfit.T)[0]]
             self.transformed_mutants = self.transformed_mutants[:,np.argsort(misfit.T)[0]]
+            self._misfit_holder *= 0
 
     def update_mean(self):
         # Update the mean
@@ -196,6 +211,8 @@ class parallel_CMA_ES(object):
                 if param.repair == 'wrapping':
                     print('computing wrapped mean for parameter:', param.name)
                     self.xmean[_i] = self.circular_mean(_i)
+            self.mean_logger_list=self.mean_logger_list.append(
+                                self._datalogger(mean=True), ignore_index=True)
 
 
     def update_step_size(self):
@@ -269,3 +286,36 @@ class parallel_CMA_ES(object):
             setattr(self.final_origin[-1], 'longitude', longitude[i])
 
         return(self.transformed_mean, self.final_origin)
+
+    def _datalogger(self, mean=False):
+        """ Descriptor for CMA-ES class datalogger.
+        """
+        if self.rank == 0:
+            if mean==False:
+                coordinates = self.transformed_mutants.T
+                misfit_values = self._misfit_holder
+                results = np.hstack((coordinates, misfit_values))
+                columns_labels=self._parameters_names+["misfit"]
+
+            if mean==True:
+                self.transformed_mean = np.zeros_like(self.xmean)
+                for _i, param in enumerate(self._parameters):
+                    print(param.scaling)
+                    if param.scaling == 'linear':
+                        self.transformed_mean[_i] = linear_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
+                    elif param.scaling == 'log':
+                        self.transformed_mean[_i] = logarithmic_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
+                    else:
+                        raise ValueError("Unrecognized scaling, must be linear or log")
+                    # Apply optional projection operator to each parameter
+                    if not param.projection is None:
+                        self.transformed_mean[_i] = np.asarray(list(map(param.projection, self.transformed_mean[_i])))
+
+                results = self.transformed_mean.T
+                columns_labels=self._parameters_names
+
+            da = pd.DataFrame(
+            data=results,
+            columns=columns_labels
+            )
+            return(da)
