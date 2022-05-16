@@ -53,6 +53,12 @@ def array_in_bounds(array, a=0, b=10):
     return True
 
 class Repair:
+    """
+    Repair class to define all the boundary handling constraint method implemented in R. Biedrzycki 2019, https://doi.org/10.1016/j.swevo.2019.100627.
+
+    These methods are invoqued whenever a CMA-ES mutant infringes a boundary.
+
+    """
     def __init__(self, method, data_array, mean, lower_bound=0, upper_bound=10):
         self.method = method
         self.data_array = data_array
