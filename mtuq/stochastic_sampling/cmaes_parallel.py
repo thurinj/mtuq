@@ -116,7 +116,7 @@ class parallel_CMA_ES(object):
         return mean
 
     # Evaluate the misfit for each mutant of the population.
-    def eval_fitness(self, data, stations, db, process, misfit, wavelet):
+    def eval_fitness(self, data, stations, db, process, misfit, wavelet, verbose=False):
         # Project each parameter in their respective physical domain, according to their `scaling` property
         self.transformed_mutants = np.zeros_like(self.scattered_mutants)
         for _i, param in enumerate(self._parameters):
@@ -135,8 +135,9 @@ class parallel_CMA_ES(object):
         if self.rank == 0:
             print('creating new origins list')
         self.create_origins()
-        for X in self.origins:
-            print(X)
+        if verbose == True:
+            for X in self.origins:
+                print(X)
         # Load, convolve and process local greens function
         start_time = MPI.Wtime()
         self.local_greens = db.get_greens_tensors(stations, self.origins)
@@ -324,3 +325,18 @@ class parallel_CMA_ES(object):
             columns=columns_labels
             )
             return(da)
+
+
+    def solve(self, data, process, misfit, stations, db, wavelet, iterations=1, verbose=False):
+        for it in range(iterations):
+            self.draw_mutants()
+            total_misfit = np.zeros((self.lmbda, 1))
+            for _i in range(len(data)):
+                total_misfit += self.eval_fitness(data[_i], stations, db, process[_i], misfit[_i], wavelet, verbose)
+            self.gather_mutants()
+            self.fitness_sort(total_misfit)
+
+            # CMA-ES update and adaptation steps
+            self.update_mean()
+            self.update_step_size()
+            self.update_covariance()
