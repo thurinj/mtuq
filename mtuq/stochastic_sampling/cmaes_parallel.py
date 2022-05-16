@@ -288,7 +288,12 @@ class parallel_CMA_ES(object):
         return(self.transformed_mean, self.final_origin)
 
     def _datalogger(self, mean=False):
-        """ Descriptor for CMA-ES class datalogger.
+        """
+        The datalogger save in memory all of the CMA-ES mutant drawn and evaluated during the inversion. This allows quickly access the inversion recods in order to plot the misfit. The data is stored within a pandas.DataFrame().
+
+        When mean=False the datalogger stores the coordinates of each mutants (Mw, v, w, kappa, sigma,...) and misfit at the current iterations.
+
+        When mean=True the datalogger stores the coordinates of the mean mutant at the current iterations. The mean mutant's misfit is not evaluated and thus only its coordinates are returned.
         """
         if self.rank == 0:
             if mean==False:
