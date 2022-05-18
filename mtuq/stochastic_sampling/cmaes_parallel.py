@@ -6,14 +6,16 @@ from mtuq.grid.force import to_force
 import mpi4py.MPI as MPI
 from mtuq.greens_tensor import GreensTensor
 from mtuq import MTUQDataFrame
-
+from mtuq.grid.moment_tensor import UnstructuredGrid, to_mt
+from mtuq.grid.force import UnstructuredGrid, to_force
+from mtuq.graphics import plot_data_greens2, plot_data_greens1
 
 # class CMA_ES(object):
 
 
 class parallel_CMA_ES(object):
 
-    def __init__(self, parameters_list, lmbda=None, data=None, GFclient=None, origin=None, callback_function=None):
+    def __init__(self, parameters_list, lmbda=None, data=None, GFclient=None, origin=None, callback_function=None, event_id=''):
         '''
         parallel_CMA_ES class
 
@@ -44,7 +46,8 @@ class parallel_CMA_ES(object):
 
         # Initialize parameters-tied variables.
         # Variables are initially shared across all processes, but most of the important computations will be carried on the root process (self.rank == 0) only.
-
+        self.event_id = event_id
+        self.iteration = 0
         self._parameters = parameters_list
         self._parameters_names = [parameter.name for parameter in parameters_list]
         self.n = len(self._parameters)
@@ -365,7 +368,7 @@ class parallel_CMA_ES(object):
             return(MTUQDataFrame(da))
 
 
-    def solve(self, data, process, misfit, stations, db, wavelet, iterations=1, verbose=False):
+    def solve(self, data, process, misfit, stations, db, wavelet, iterations=1, verbose=False, plot_waveforms=True):
         for it in range(iterations):
             self.draw_mutants()
             total_misfit = np.zeros((self.lmbda, 1))
@@ -379,3 +382,31 @@ class parallel_CMA_ES(object):
             self.update_mean()
             self.update_step_size()
             self.update_covariance()
+            if self.rank == 0:
+                if plot_waveforms==True:
+                    self.plot_mean_waveforms(data, process, misfit, stations, db)
+            if plot_waveforms==True:
+                self.iteration += 1
+
+    def plot_mean_waveforms(self, data, process, misfit, stations, db):
+
+        mean_solution, final_origin = self.return_candidate_solution()
+
+        mean_solution = self.mean_logger_list.iloc[-1][['Mw','v','w','kappa','sigma','h']].values
+        solution_grid = UnstructuredGrid(dims=('rho', 'v', 'w', 'kappa', 'sigma', 'h'),coords=(mean_solution),callback=to_mt)
+
+
+        best_source = solution_grid.get(0)
+        lune_dict = solution_grid.get_dict(0)
+        greens = db.get_greens_tensors(stations, final_origin[0])
+
+        if len(data) == len(process) == len(misfit) == 2:
+            greens_0 = greens.map(process[0])
+            greens_1 = greens.map(process[1])
+            greens_1[0].tags[0]='model:ak135f_2s'
+            plot_data_greens2(self.event_id+'FMT_waveforms_mean_'+str(self.iteration)+'.png',data[0], data[1], greens_0, greens_1, process[0], process[1], misfit[0], misfit[1], stations, final_origin[0], best_source, lune_dict)
+
+        if len(data) == len(process) == len(misfit) == 1:
+            greens_1 = greens.map(process[0])
+            greens_1[0].tags[0]='model:ak135f_2s'
+            plot_data_greens1(self.event_id+'FMT_waveforms_mean_'+str(self.iteration)+'.png',data, greens, process, misfit, stations, final_origin[0], best_source, lune_dict)
