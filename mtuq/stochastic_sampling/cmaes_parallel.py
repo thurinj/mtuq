@@ -31,18 +31,19 @@ class parallel_CMA_ES(object):
         self.counteval = 0
         if not callback_function == None:
             self.callback = callback_function
-        elif len(parameters_list) == 6 or len(parameters_list) == 9:
+        elif 'v' in self._parameters_names or 'kappa' in self._parameters_names:
             self.callback = to_mij
             self.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
             self.mode = 'mt'
-        elif len(parameters_list) == 3:
+        elif len(self._parameters) == 3:
             self.callback = to_force
             self.mode = 'force'
-        # Parameter setting
-        if not lmbda == None:
-            self.lmbda = lmbda
+
+        # Main user input: lmbda is the number of mutants. If no lambda is given, it will determine the number of mutants based on the number of parameters.
+        if lmbda == None:
+            self.lmbda = int(4 + np.floor(3*np.log(len(self._parameters))))
         else:
-            self.lmbda = 40
+            self.lmbda = lmbda
 
         self.mu = np.floor(self.lmbda/2)
         a = 1 # Original author uses 1/2 in tutorial and 1 in publication
@@ -61,7 +62,7 @@ class parallel_CMA_ES(object):
         self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov*self.mueff/2))
 
         # Defining 'holder' variable for post processing and plotting.
-        self._misfit_holder = np.zeros((self.lmbda,1))
+        self._misfit_holder = np.zeros((int(self.lmbda),1))
         self.mutants_logger_list = pd.DataFrame()
         self.mean_logger_list = pd.DataFrame()
 
