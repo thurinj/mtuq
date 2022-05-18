@@ -5,6 +5,7 @@ from mtuq.util.math import to_mij, to_rtp, to_rho
 from mtuq.grid.force import to_force
 import mpi4py.MPI as MPI
 from mtuq.greens_tensor import GreensTensor
+from mtuq import MTUQDataFrame
 
 
 # class CMA_ES(object):
@@ -12,7 +13,28 @@ from mtuq.greens_tensor import GreensTensor
 
 class parallel_CMA_ES(object):
 
-    def __init__(self, parameters_list, lmbda=None, data=None, GFclient=None, origin=None, callback_function=None): # Initialise with the parameters to be used in optimisation.
+    def __init__(self, parameters_list, lmbda=None, data=None, GFclient=None, origin=None, callback_function=None):
+        '''
+        parallel_CMA_ES class
+
+        CMA-ES class for moment tensor and force inversion. The class accept a list of `CMAESParameters` objects containing the options and tunning of each of the inverted parameters. CMA-ES will be carried automatically based of the content of the `CMAESParameters` list.
+
+        .. rubric :: Usage
+
+        The inversion is carried in a two step procedure
+
+        .. code::
+
+        cma_es = parallel_CMA_ES(**parameters)
+        cma_es.solve(data, process, misfit, stations, db, wavelet, iterations=10)
+
+        In the first step, the user supplies parameters such as the number of mutants, the list of inverted parameters, the catalog origin, etc. (see below for detailed argument descriptions).
+
+        In the second step, the user supplies data, data process, misfit type, stations list, an Axisem Green's function database, a source wavelet and a number of iterations on which to carry the CMA-ES inversion (number of generations).
+
+        .. rubric:: Parameters
+
+        '''
 
         # Generate Class based MPI communicator
         self.comm = MPI.COMM_WORLD
@@ -21,21 +43,22 @@ class parallel_CMA_ES(object):
 
 
         # Initialize parameters-tied variables.
-        # Variables are initially shared across all processes, but only self.rank = 0 matters
+        # Variables are initially shared across all processes, but most of the important computations will be carried on the root process (self.rank == 0) only.
+
         self._parameters = parameters_list
         self._parameters_names = [parameter.name for parameter in parameters_list]
         self.n = len(self._parameters)
         self.xmean = np.asarray([[val.initial for val in self._parameters]]).T
-        self.sigma = 1
+        self.sigma = 1 # Default initial gaussian variance for all parameters.
         self.catalog_origin = origin
         self.counteval = 0
         if not callback_function == None:
             self.callback = callback_function
-        elif 'v' in self._parameters_names or 'kappa' in self._parameters_names:
+        elif 'Mw' in self._parameters_names or 'kappa' in self._parameters_names:
             self.callback = to_mij
             self.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
             self.mode = 'mt'
-        elif len(self._parameters) == 3:
+        elif 'F0' in self._parameters_names == 3:
             self.callback = to_force
             self.mode = 'force'
 
@@ -78,7 +101,9 @@ class parallel_CMA_ES(object):
         self.mutants = np.zeros((self.n, self.lmbda))
 
     def draw_mutants(self):
-        # Mutants are only drawn on root process, and split mutant list are passed to all processes.
+        '''
+        Function that randomly draw `self.lmbda` mutants from a Gaussian repartition on the root process. It then applies the corresponding repair method for each of the parameters, and scatter the splitted list of muttant accross all the computing processes.
+        '''
         if self.rank == 0:
             # Hardcode the bounds of CMA-ES search for safety.
             bounds = [0,10]
@@ -99,7 +124,9 @@ class parallel_CMA_ES(object):
         self.scattered_mutants = self.comm.scatter(self.mutant_lists, root=0)
 
     def mean_diff(self, new, old):
-        # Compute mean change, and apply circular difference for wrapped repair methods (implying periodic parameters)
+        '''
+        Compute mean change, and apply circular difference for wrapped repair methods (implying periodic parameters)
+        '''
         diff = new-old
         for _i, param in enumerate(self._parameters):
             if param.repair == 'wrapping':
@@ -109,7 +136,9 @@ class parallel_CMA_ES(object):
         return diff
 
     def circular_mean(self, id):
-        # Compute the circular mean on the "id"th parameter. Ciruclar mean allows to compute mean of the samples on a periodic space.
+        '''
+        Compute the circular mean on the "id"th parameter. Ciruclar mean allows to compute mean of the samples on a periodic space.
+        '''
         param = self.mutants[id]
         a = linear_transform(param, 0, 360)-180
         mean = np.rad2deg(np.arctan2(np.sum(np.sin(np.deg2rad(a[range(int(self.mu))]))*self.weights.T), np.sum(np.cos(np.deg2rad(a[range(int(self.mu))]))*self.weights.T)))+180
@@ -132,13 +161,20 @@ class parallel_CMA_ES(object):
             if not param.projection is None:
                 self.transformed_mutants[_i] = np.asarray(list(map(param.projection, self.transformed_mutants[_i])))
 
-        self.sources = np.ascontiguousarray(self.callback(*self.transformed_mutants[0:6]))
-        if self.rank == 0:
-            print('creating new origins list')
-        self.create_origins()
-        if verbose == True:
-            for X in self.origins:
-                print(X)
+        # Using callback for mt or force inversion
+        if self.mode == 'mt':
+            self.sources = np.ascontiguousarray(self.callback(*self.transformed_mutants[0:6]))
+
+        # Generate origin list if required
+        if 'latitude' in self._parameters_names\
+        or 'longitude'in self._parameters_names\
+        or 'depth' in self._parameters_names:
+            if self.rank == 0:
+                print('creating new origins list')
+            self.create_origins()
+            if verbose == True:
+                for X in self.origins:
+                    print(X)
         # Load, convolve and process local greens function
         start_time = MPI.Wtime()
         self.local_greens = db.get_greens_tensors(stations, self.origins)
@@ -159,9 +195,8 @@ class parallel_CMA_ES(object):
 
         self.local_misfit_val = [misfit(data, self.local_greens.select(origin), np.array([self.sources[_i]])) for _i, origin in enumerate(self.origins)]
         self.local_misfit_val = np.asarray(self.local_misfit_val).T[0]
-        # Increment the counter for the number of misfit evals.
-        self.counteval += self.lmbda
-        # print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
+        if verbose == True:
+            print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
 
 
         # # Gather_time_shift_info
@@ -179,18 +214,20 @@ class parallel_CMA_ES(object):
         self._misfit_holder += self.misfit_val
         return self.misfit_val
 
-    def gather_mutants(self):
+    def gather_mutants(self, verbose=False):
         self.mutants = self.comm.gather(self.scattered_mutants, root=0)
         if self.rank == 0:
             self.mutants = np.concatenate(self.mutants, axis=1)
-            # print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', type(self.mutants)) # - DEBUG PRINT
+            if verbose == True:
+                print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', type(self.mutants)) # - DEBUG PRINT
         else:
             self.mutants = None
 
         self.transformed_mutants = self.comm.gather(self.transformed_mutants, root=0)
         if self.rank == 0:
             self.transformed_mutants = np.concatenate(self.transformed_mutants, axis=1)
-            # print(self.transformed_mutants, '\n', 'shape is', np.shape(self.transformed_mutants), '\n', 'type is', type(self.transformed_mutants)) # - DEBUG PRINT
+            if verbose == True:
+                print(self.transformed_mutants, '\n', 'shape is', np.shape(self.transformed_mutants), '\n', 'type is', type(self.transformed_mutants)) # - DEBUG PRINT
         else:
             self.transformed_mutants = None
 
@@ -325,7 +362,7 @@ class parallel_CMA_ES(object):
             data=results,
             columns=columns_labels
             )
-            return(da)
+            return(MTUQDataFrame(da))
 
 
     def solve(self, data, process, misfit, stations, db, wavelet, iterations=1, verbose=False):
@@ -334,6 +371,7 @@ class parallel_CMA_ES(object):
             total_misfit = np.zeros((self.lmbda, 1))
             for _i in range(len(data)):
                 total_misfit += self.eval_fitness(data[_i], stations, db, process[_i], misfit[_i], wavelet, verbose)
+            self.counteval += self.lmbda
             self.gather_mutants()
             self.fitness_sort(total_misfit)
 
