@@ -224,14 +224,16 @@ if __name__=='__main__':
 
         results = results_bw + results_sw
 
-        origin_idx = results.origin_idxmin()
-        best_origin = origins[origin_idx]
+        # origin corresponding to minimum misfit
+        best_origin = origins[results.idxmin('origin')]
+        origin_dict = best_origin.as_dict()
 
-        source_idx = results.source_idxmin()
-        best_mt = grid.get(source_idx)
+        # array index corresponding to minimum misfit
+        idx = results.idxmin('source')
 
-        lune_dict = grid.get_dict(source_idx)
-        mt_dict = best_mt.as_dict()
+        best_source = grid.get(idx)
+        lune_dict = grid.get_dict(idx)
+        mt_dict = grid.get(idx).as_dict()
 
 
         #
@@ -242,7 +244,7 @@ if __name__=='__main__':
 
         plot_data_greens2(event_id+'DC+XY_waveforms.png',
             data_bw, data_sw, greens_bw, greens_sw, process_bw, process_sw, 
-            misfit_bw, misfit_sw, stations, best_origin, best_mt, lune_dict)
+            misfit_bw, misfit_sw, stations, best_origin, best_source, lune_dict)
 
 
         plot_misfit_latlon(event_id+'DC+XY_misfit_latlon.png', results, origins,
@@ -255,22 +257,9 @@ if __name__=='__main__':
 
         print('Saving results...\n')
 
-        # collect information about best-fitting source
-        merged_dict = merge_dicts(
+        merged_dict = merge_dicts(lune_dict, mt_dict, best_origin,
+            {'M0': best_source.moment(), 'Mw': best_source.magnitude()})
 
-            # dictionary of Mij parameters
-            mt_dict,
-
-            # dictionary of Tape2015 parameters
-            lune_dict,
-
-            # magnitude information
-            {'M0': best_mt.moment()},
-            {'Mw': best_mt.magnitude()},
-
-            # origin information
-            best_origin,
-            )
 
         # save best-fitting source
         save_json(event_id+'DC+XY_solution.json', merged_dict)

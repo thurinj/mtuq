@@ -10,10 +10,16 @@ from mtuq.util.math import open_interval as regular
 from mtuq.util.math import to_rtp
 
 
-#
-# see here for usage and other practical information
-# https://uafgeotools.github.io/mtuq/user_guide/06/moment_tensor_and_force_grids.html
-#
+def to_force(F0, phi, h):
+    """ Converts from spherical coordinates to Force object
+
+    .. note::
+
+      - `phi` is measured in degrees counterclockwise from east
+    
+    """
+    rtp = to_rtp(F0, phi, h)
+    return Force(rtp, convention='USE')
 
 
 def ForceGridRegular(magnitudes_in_N=1., npts_per_axis=80):
@@ -22,6 +28,16 @@ def ForceGridRegular(magnitudes_in_N=1., npts_per_axis=80):
     Given input parameters ``magnitudes_in_N`` (`list`) and
     ``npts_per_axis`` (`int`), returns a ``Grid`` of size
     `len(magnitudes_in_N)*npts_per_axis^2`.
+
+    .. rubric :: Usage
+
+    Use ``get(i)`` to return the `i`-th force as a `Force` object
+
+    Use ``get(i).as_vector()`` to return the `i`-th force as a NumPy array
+    `Fr, Ft, Fp`
+
+    Use ``get_dict(i)`` to return the `i`-th force as dictionary
+    of parameters `F0, phi, h`
 
     """
     phi = regular(0., 360., npts_per_axis)
@@ -41,6 +57,16 @@ def ForceGridRandom(magnitudes_in_N=1., npts=10000):
     ``npts`` (`int`), returns an ``UnstructuredGrid`` of size
     `npts*len(magnitudes_in_N)`.
 
+    .. rubric :: Usage
+
+    Use ``get(i)`` to return the `i`-th force as a `Force` object
+
+    Use ``get(i).as_vector()`` to return the `i`-th force as a NumPy array
+    `Fr, Ft, Fp`
+
+    Use ``get_dict(i)`` to return the `i`-th force as dictionary
+    of parameters `F0, phi, h`
+
     """
     phi = random(0., 360., npts)
     h = random(-1., 1., npts)
@@ -55,19 +81,4 @@ def ForceGridRandom(magnitudes_in_N=1., npts=10000):
         coords=(F0, phi, h),
         callback=to_force)
 
-
-#
-# utility functions
-#
-
-def to_force(F0, phi, h):
-    """ Converts from spherical coordinates to Force object
-
-    .. note::
-
-      - `phi` is measured in degrees counterclockwise from east
-    
-    """
-    rtp = to_rtp(F0, phi, h)
-    return Force(rtp, convention='USE')
 

@@ -18,8 +18,9 @@ class Client(ClientBase):
 
     .. rubric:: Usage
 
-    To instantiate a syngine client, supply a model name from one of the
-    `available Earth models <http://ds.iris.edu/ds/products/syngine/#models>`_
+    To instantiate a syngine client, supply the name of an Earth model from one
+    one of the available Earth models listed at
+    http://ds.iris.edu/ds/products/syngine/#models
 
     .. code::
 
@@ -139,7 +140,7 @@ def download_greens_tensors(stations=[], origins=[], model='', verbose=False, **
     """ Downloads Green's tensors from syngine
 
     Downloads Green's functions for all combinations of stations and origins
-    using the `syngine <http://ds.iris.edu/ds/products/syngine/>`_ web service.
+    using syngine web service (http://ds.iris.edu/ds/products/syngine/).
     Returns an `mtuq.GreensTensorList` of length `len(stations)*len(origins)`.
 
 
@@ -156,7 +157,7 @@ def download_greens_tensors(stations=[], origins=[], model='', verbose=False, **
 
     ``model`` (str):
     Earth model for which Green's functions will be downloaded, from list of
-    `available models <http://ds.iris.edu/ds/products/syngine/>`_
+    available models given at http://ds.iris.edu/ds/products/syngine/.
 
     """
     client = Client(model=model, **kwargs)

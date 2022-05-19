@@ -40,13 +40,6 @@ autogen
    mtuq.graphics.plot_marginal_latlon
    mtuq.graphics.plot_misfit_latlon
    mtuq.graphics._plot_latlon
-   mtuq.graphics.plot_time_shifts
-   mtuq.graphics.plot_amplitude_ratios
-   mtuq.graphics.plot_log_amplitude_ratios
-   mtuq.graphics._plot_attrs
-   mtuq.graphics.attrs._default_backend
-   mtuq.grid.DeviatoricGridRandom
-   mtuq.grid.DeviatoricGridSemiregular
    mtuq.grid.DoubleCoupleGridRandom
    mtuq.grid.DoubleCoupleGridRegular
    mtuq.grid.FullMomentTensorGridRandom
@@ -55,12 +48,9 @@ autogen
    mtuq.grid.ForceGridRegular
    mtuq.grid.Grid
    mtuq.grid.UnstructuredGrid
-   mtuq.grid.moment_tensor._semiregular
    mtuq.grid_search.grid_search
-   mtuq.grid_search.open_ds
    mtuq.grid_search.MTUQDataArray
    mtuq.grid_search.MTUQDataFrame
-   mtuq.util.math.to_rtp
    mtuq.Force
    mtuq.MomentTensor
    mtuq.Wavelet
