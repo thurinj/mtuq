@@ -40,7 +40,8 @@ def misfit(data, greens, sources, norm, time_shift_groups,
     #
     data = _get_data(data, stations, components)
     greens = _get_greens(greens, stations, components)
-    sources = _to_array(sources)
+    if not isinstance(sources, (np.ndarray)):
+        sources = _to_array(sources)
 
     # sanity checks
     _check(data, greens, sources)
@@ -63,7 +64,7 @@ def misfit(data, greens, sources, norm, time_shift_groups,
     # collect message attributes
     #
     try:
-        msg_args = [getattr(msg_handle, attrib) for attrib in 
+        msg_args = [getattr(msg_handle, attrib) for attrib in
             ['start', 'stop', 'percent']]
     except:
         msg_args = [0, 0, 0]
@@ -185,7 +186,7 @@ def _get_mask(data, stations, components):
 
     mask = np.ones((
         Nstations,
-        Ncomponents, 
+        Ncomponents,
         ))
 
     for _i, station in enumerate(stations):
@@ -214,8 +215,8 @@ def _get_groups(groups, components):
     Ngroups = len(groups)
 
     array = np.zeros((
-        Ngroups, 
-        Ncomponents, 
+        Ngroups,
+        Ncomponents,
         ))
 
     for _i, group in enumerate(groups):
@@ -343,14 +344,14 @@ def _autocorr_2(greens, padding):
     Ngreens = greens.shape[2]
     Npts = greens.shape[3]
 
-    ones = np.pad(np.ones(Npts), 
+    ones = np.pad(np.ones(Npts),
         (padding[0], padding[1]), 'constant')
 
     corr = np.zeros((
         Nstations,
-        Ncomponents, 
-        padding[0]+padding[1]+1, 
-        Ngreens, 
+        Ncomponents,
+        padding[0]+padding[1]+1,
+        Ngreens,
         Ngreens,
         ))
 
@@ -368,5 +369,3 @@ def _autocorr_2(greens, padding):
                         corr[_i, _j, :, _k1, _k2] = corr[_i, _j, :, _k2, _k1]
 
     return corr
-
-
