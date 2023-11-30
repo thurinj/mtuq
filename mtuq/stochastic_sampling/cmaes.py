@@ -19,6 +19,7 @@ from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
 from mtuq.misfit import Misfit, PolarityMisfit
 from mtuq.misfit.waveform import calculate_norm_data 
 from mtuq.process_data import ProcessData
+from mpi4py import MPI
 # class CMA_ES(object):
 
 
@@ -53,7 +54,6 @@ class CMA_ES(object):
         self.size = 1
 
         # if is_mpi_env(): # Removed for now, as I am not sure how to handle the case where the user wants to use MPI but not CMA-ES.
-        from mpi4py import MPI
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
