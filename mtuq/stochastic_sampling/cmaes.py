@@ -52,14 +52,14 @@ class CMA_ES(object):
         self.rank = 0
         self.size = 1
 
-        if is_mpi_env():
-            from mpi4py import MPI
-            self.comm = MPI.COMM_WORLD
-            self.rank = self.comm.Get_rank()
-            self.size = self.comm.Get_size()
+        # if is_mpi_env(): # Removed for now, as I am not sure how to handle the case where the user wants to use MPI but not CMA-ES.
+        from mpi4py import MPI
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()
 
-            if self.size > lmbda:
-                raise Exception('Number of MPI processes exceeds population size')
+        if self.size > lmbda:
+            raise Exception('Number of MPI processes exceeds population size')
 
         # Initialize parameters-tied variables.
         # Variables are initially shared across all processes, but most of the important computations will be carried on the root process (self.rank == 0) only.
