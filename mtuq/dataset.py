@@ -1,5 +1,6 @@
 
 import obspy
+import os
 import numpy as np
 import pickle
 
@@ -206,6 +207,23 @@ class Dataset(list):
         return stations
 
 
+    def get_stats(self):
+        """ Returns trace metadata in nested lists
+        
+        .. note ::
+                
+          For Datasets created using ``mtuq.io.readers``, SAC header metadata
+          is used to populate the Station attributes
+        
+        """ 
+        stats = []
+        for stream in self:
+            stats += [[]]
+            for trace in stream:
+                stats[-1] += [trace.stats]
+        return stats
+
+
     def get_origins(self):
         """ Returns origin metadata from all streams as a `list` of 
         `mtuq.event.Origin` objects
@@ -268,9 +286,31 @@ class Dataset(list):
         return new_ds
 
 
-    def write(self, filename):
-        """ Writes a Python pickle of current dataset
+    def copy(self):
+        return self.__copy__()
+
+
+    def write(self, path, format='sac'):
+        """ Writes dataset to disk
         """
-        with open(filename, "wb") as file:
-           pickle.dump(self, file)
+        if format.lower() == 'pickle':
+
+            with open(filename, "wb") as file:
+               pickle.dump(self, path)
+
+        elif format.lower() == 'sac':
+
+            os.makedirs(path, exist_ok=True)
+            for stream in self:
+                for trace in stream:
+
+                    keys = ('network','station','location','channel')
+                    filename = '.'.join([trace.stats[key] for key in keys])
+
+                    fullpath = '%s/%s.%s' % (path,filename,'sac')
+                    trace.write(fullpath, format='sac')
+                    
+        else:
+            raise ValueError('Unrecognized file format')
+        
 

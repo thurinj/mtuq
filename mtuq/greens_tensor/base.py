@@ -6,6 +6,7 @@ from copy import copy, deepcopy
 from mtuq.event import Origin
 from mtuq.station import Station
 from mtuq.dataset import Dataset
+from mtuq.util import Null
 from mtuq.util.signal import check_time_sampling
 from obspy.core import Stream, Trace
 from obspy.geodetics import gps2dist_azimuth
@@ -142,24 +143,27 @@ class GreensTensor(Stream):
         return nc, nr, nt
 
 
-    def _allocate_stream(self):
+    def _allocate_stream(self, stats=None):
         """ Allocates ObsPy stream used by `get_synthetics`
         """
         nc, nr, nt = self._get_shape()
 
+        if not stats:
+            stats = []
+            for component in self.components:
+                stats += [self[0].stats.copy()]
+                stats[-1].update({'npts': nt, 'channel': component})
+
         stream = Stream()
-        for component in self.components:
-            # add stats object
-            stats = self.station.copy()
-            stats.update({'npts': nt, 'channel': component})
+        for _i, component in enumerate(self.components):
             # add trace object
-            stream += Trace(np.zeros(nt), stats)
+            stream += Trace(np.zeros(nt), stats[_i])
 
         return stream
 
 
 
-    def get_synthetics(self, source, components=None, inplace=False):
+    def get_synthetics(self, source, components=None, stats=None, inplace=False):
         """ Generates synthetics through a linear combination of time series
 
         Returns an ObsPy stream
@@ -173,6 +177,9 @@ class GreensTensor(Stream):
         List containing zero or more of the following components: 
         ``Z``, ``R``, ``T``. (Defaults to ``['Z', 'R', 'T']``.)
         
+        ``stats`` (`obspy.Trace.Stats` object):
+        ObsPy Stats object that will be attached to the synthetics
+
         """
 
         if components is None:
@@ -190,7 +197,7 @@ class GreensTensor(Stream):
         if inplace:
             synthetics = self._synthetics
         else:
-            synthetics = self._allocate_stream()
+            synthetics = self._allocate_stream(stats)
 
         for _i, component in enumerate(self.components):
             # Even with careful attention to index order, np.dot is very slow.
@@ -284,7 +291,7 @@ class GreensTensorList(list):
         return selected
 
 
-    def get_synthetics(self, source, components=None, mode='apply', **kwargs):
+    def get_synthetics(self, source, components=None, stats=None, mode='apply', **kwargs):
         """ Generates synthetics through a linear combination of time series
 
         Returns an MTUQ `Dataset`
@@ -297,20 +304,28 @@ class GreensTensorList(list):
         ``components`` (`list`):
         List containing zero or more of the following components: 
         ``Z``, ``R``, ``T``. (Defaults to ``['Z', 'R', 'T']``.)
+
+        ``stats`` (`obspy.Trace.Stats` object):
+        ObsPy Stats object that will be attached to the synthetics
         
         """
         if mode=='map':
+            if components is None:
+                components = [None for _ in range(len(self))]
+            if stats is None:
+                stats = [None for _ in range(len(self))]
+
             synthetics = Dataset()
             for _i, tensor in enumerate(self):
-                synthetics.append(
-                    tensor.get_synthetics(source, components=components[_i], **kwargs))
+                synthetics.append(tensor.get_synthetics(
+                    source, components=components[_i], stats=stats[_i], **kwargs))
             return synthetics
 
         elif mode=='apply':
             synthetics = Dataset()
             for tensor in self:
-                synthetics.append(
-                    tensor.get_synthetics(source, components=components, **kwargs))
+                synthetics.append(tensor.get_synthetics(
+                    source, components=components, stats=stats, **kwargs))
             return synthetics
 
         else:
@@ -335,8 +350,8 @@ class GreensTensorList(list):
         """
         processed = []
         for tensor in self:
-            processed +=\
-                [function(tensor, *args, **kwargs)]
+            processed += [function(tensor, *args, **kwargs)]
+
         return self.__class__(processed)
 
 
@@ -359,8 +374,8 @@ class GreensTensorList(list):
         processed = []
         for _i, tensor in enumerate(self):
             args = [sequence[_i] for sequence in sequences]
-            processed +=\
-                [function(tensor, *args)]
+            processed += [function(tensor, *args)]
+
         return self.__class__(processed)
 
 
@@ -416,7 +431,6 @@ class GreensTensorList(list):
             return self.__class__(final_list)
 
 
-
     def convolve(self, wavelet):
         """ Convolves time series with given wavelet
 
@@ -469,7 +483,7 @@ class GreensTensorList(list):
 
 
     def sort_by_function(self, function, reverse=False):
-        """ Sorts in-place using the python built-in `sort`
+        """ Sorts in-place by user-supplied function
         """
         self.sort(key=function, reverse=reverse)
 
@@ -485,6 +499,9 @@ class GreensTensorList(list):
             new_ds.append(deepcopy(stream))
         return new_ds
 
+
+    def copy(self):
+        return self.__copy__()
 
 
     def write(self, filename):
