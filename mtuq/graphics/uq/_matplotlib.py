@@ -12,6 +12,7 @@ from matplotlib.colors import BoundaryNorm
 from matplotlib import ticker
 from mtuq.util.math import wrap_180
 from scipy import interpolate
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 def cbformat(st, pos):
     return '{:.1E}'.format(st)
@@ -106,10 +107,15 @@ def _plot_lune_matplotlib(filename, longitude, latitude, values,
 
     # if plot type is colormesh or contour:
     if plot_type in ['colormesh', 'contour']:
-        cb = pyplot.colorbar(im, location='bottom', ax=ax, pad=0.001, fraction=0.02)
-        cb.set_label('l2-misfit')
+        divider = make_axes_locatable(pyplot.gca())
+        cax = divider.append_axes("bottom", '2%', pad=0.001)
+        cb = pyplot.colorbar(im, cax=cax, orientation='horizontal', ticks=ticker.MaxNLocator(nbins=5))
+        cb.set_label('L2-Misfit')
+
     elif plot_type == 'scatter':
-        cb = pyplot.colorbar(im, location='bottom', ax=ax, pad=0.001, fraction=0.02, ticks=boundaries, extend='max')
+        divider = make_axes_locatable(pyplot.gca())
+        cax = divider.append_axes("bottom", '2%', pad=0.001)
+        cb = pyplot.colorbar(im, cax=cax, orientation='horizontal', ticks=boundaries, extend='max')
         cb.set_label('Mismatching polarities')
 
     # Set title
@@ -118,7 +124,8 @@ def _plot_lune_matplotlib(filename, longitude, latitude, values,
         
     # Save figure
     pyplot.tight_layout()
-    pyplot.savefig(filename, dpi=300, bbox_inches='tight')
+    pyplot.subplots_adjust(left=0.1,right=0.9,top=0.95, bottom=0.08)
+    pyplot.savefig(filename, dpi=300)
     pyplot.close()
 
 def _plot_force_matplotlib(filename, phi, h, values, best_force=None, colormap='viridis', title=None, plot_type='contour', **kwargs):
@@ -476,7 +483,7 @@ def _hammer_projection(lon, lat):
 
 def _generate_lune(ax=None):
     if ax is None:
-        fig = pyplot.figure(figsize=(2.5, 8))
+        fig = pyplot.figure(figsize=(2.5, 7.0))
         ax = fig.add_subplot(111)
         ax.set_axis_off()
     else:
