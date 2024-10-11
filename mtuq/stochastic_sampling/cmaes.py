@@ -1,9 +1,12 @@
-from re import L
 import numpy as np
 import pandas as pd
+from mpi4py import MPI
+
+import matplotlib
+matplotlib.use('Agg')
+
 from mtuq.util.cmaes import *
 from mtuq.util.math import to_mij, to_rtp, to_gamma, to_delta, wrap_180
-from mtuq.greens_tensor import GreensTensor
 from mtuq import MTUQDataFrame
 from mtuq.grid.moment_tensor import UnstructuredGrid
 from mtuq.grid.force import UnstructuredGrid
@@ -13,19 +16,16 @@ from mtuq.greens_tensor.base import GreensTensorList
 from mtuq.dataset import Dataset
 from mtuq.event import MomentTensor, Force
 from mtuq.graphics.uq._matplotlib import _hammer_projection, _generate_lune, _generate_sphere
-from mtuq.util import is_mpi_env
 from mtuq.graphics import plot_combined, plot_misfit_force
 from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
 from mtuq.misfit import Misfit, PolarityMisfit
 from mtuq.misfit.waveform import calculate_norm_data 
 from mtuq.process_data import ProcessData
-from mpi4py import MPI
-# class CMA_ES(object):
 
 
 class CMA_ES(object):
 
-    def __init__(self, parameters_list, lmbda=None, data=None, GFclient=None, origin=None, callback_function=None, event_id=''):
+    def __init__(self, parameters_list: list, lmbda: int = None, origin=None, callback_function=None, event_id: str = '', verbose_level: int = 0):
         '''
         parallel_CMA_ES class
 
@@ -47,154 +47,229 @@ class CMA_ES(object):
 
         .. rubric:: Parameters
 
+        ``parameters_list`` (`list`): A list of `CMAESParameters` objects containing the options and tunning of each of the inverted parameters.
+
+        ``lmbda`` (`int`): The number of mutants to be generated. If None, the default value is set to 4 + np.floor(3 * np.log(len(parameters_list))).
+
+        ``origin`` (`mtuq.Event`): The origin of the event to be inverted.
+
         '''
 
-        # Generate Class based MPI communicator
+        # Initialize basic properties
+        self._initialize_mpi_communicator()
+        self._initialize_logging(event_id, verbose_level)
+        self._initialize_parameters(parameters_list, lmbda, origin, callback_function)
+        
+        # Set up caches and storage for logging
+        self._setup_caches()
+
+    def _initialize_mpi_communicator(self):
+        """ Initializes the MPI communicator and sets the process rank and size. """
         self.rank = 0
         self.size = 1
-
-        # if is_mpi_env(): # Removed for now, as I am not sure how to handle the case where the user wants to use MPI but not CMA-ES.
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
-
-        if self.size > lmbda:
-            raise Exception('Number of MPI processes exceeds population size')
-
-        # Initialize parameters-tied variables.
-        # Variables are initially shared across all processes, but most of the important computations will be carried on the root process (self.rank == 0) only.
+    
+    def _initialize_logging(self, event_id, verbose_level):
+        """ Sets up logging properties like event_id and verbosity level. """
         self.event_id = event_id
-        self.iteration = 0
+        self.verbose_level = verbose_level
+        if self.rank == 0:
+            print(f'Initializing CMA-ES inversion for event {self.event_id}')
+
+    def _initialize_parameters(self, parameters_list, lmbda, origin, callback_function):
+        """
+        Initializes the parameters for the CMA-ES algorithm, including population size, callback function,
+        and variables related to step-size control and covariance matrix adaptation.
+        """
         self._parameters = parameters_list
         self._parameters_names = [parameter.name for parameter in parameters_list]
         self.n = len(self._parameters)
-        self.xmean = np.asarray([[val.initial for val in self._parameters]]).T
-        self.sigma = 0.5 # Default initial gaussian variance for all parameters.
+
+        # Set the default number of mutants (lambda) if not specified
+        if lmbda is None:
+            self.lmbda = int(4 + np.floor(3 * np.log(self.n)))
+        else:
+            self.lmbda = lmbda
+
+        # Ensure that the number of MPI processes is not greater than the population size
+        if self.size > self.lmbda:
+            raise ValueError(f'Number of MPI processes ({self.size}) exceeds population size ({self.lmbda})')
+
+        # Set the origin for the inversion
         self.catalog_origin = origin
+
+        # Handle callback function initialization
+        self.callback = callback_function
+        if self.callback is None:
+            self._set_default_callback()
+
+        # Initialize parameters tied to the CMA-ES algorithm
+        self.xmean = np.asarray([[param.initial for param in self._parameters]]).T
+        self.sigma = 0.5  # Default initial Gaussian variance for all parameters
+        self.iteration = 0
         self.counteval = 0
-        self._greens_tensors_cache = {} # Minor optimization for `db` mode with fixed origin. Will store the Green's tensors for each ProcessData() used in eval_fitness(). While it is recommanded to use the `greens` mode for fixed origin, this will make the computation faster in case `db` mode is used instead.
+        self._greens_tensors_cache = {}
 
-        if self.rank == 0:
-            print('Initialising CMA-ES inversion for event %s' % self.event_id)
+        # Weight initialization for recombination
+        self.mu = np.floor(self.lmbda / 2)
+        a = 1  # Use 1/2 in tutorial and 1 in publication
+        self.weights = np.array([np.log(self.mu + a) - np.log(np.arange(1, self.mu + 1))]).T
+        self.weights /= sum(self.weights)
+        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
 
-        if not callback_function == None:
-            self.callback = callback_function
-        elif 'Mw' in self._parameters_names or 'kappa' in self._parameters_names:
+        # Step-size control parameters
+        self.cs = (self.mueff + 2) / (self.n + self.mueff + 5)
+        self.damps = 1 + 2 * max(0, np.sqrt((self.mueff - 1) / (self.n + 1)) - 1) + self.cs
+
+        # Covariance matrix adaptation parameters
+        self.cc = (4 + self.mueff / self.n) / (self.n + 4 + 2 * self.mueff / self.n)
+        self.acov = 2
+        self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
+        self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov * self.mueff / 2))
+
+        # Initialize step-size and covariance-related variables
+        self.ps = np.zeros_like(self.xmean)
+        self.pc = np.zeros_like(self.xmean)
+        self.B = np.eye(self.n, self.n)
+        self.D = np.ones((self.n, 1))
+        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
+        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
+        self.eigeneval = 0
+        self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
+        self.mutants = np.zeros((self.n, self.lmbda))
+
+    def _set_default_callback(self):
+        """ Sets the default callback function based on the parameter names. """
+        if 'Mw' in self._parameters_names or 'kappa' in self._parameters_names:
             self.callback = to_mij
             self.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
             self.mode = 'mt'
-            if not 'w' in self._parameters_names and 'v' in self._parameters_names:
+            if 'w' not in self._parameters_names and 'v' in self._parameters_names:
+                self.callback = to_mij
                 self.mode = 'mt_dev'
                 self.mij_args = ['rho', 'w', 'kappa', 'sigma', 'h']
-            elif not 'v' in self._parameters_names and not 'w' in self._parameters_names:
+            elif 'v' not in self._parameters_names and 'w' not in self._parameters_names:
+                self.callback = to_mij
                 self.mode = 'mt_dc'
                 self.mij_args = ['rho', 'kappa', 'sigma', 'h']
         elif 'F0' in self._parameters_names:
             self.callback = to_rtp
             self.mode = 'force'
-        
-        self.fig = None
-        self.ax = None
 
-        # Main user input: lmbda is the number of mutants. If no lambda is given, it will determine the number of mutants based on the number of parameters.
-        if lmbda == None:
-            self.lmbda = int(4 + np.floor(3*np.log(len(self._parameters))))
-        else:
-            self.lmbda = lmbda
-
-        self.mu = np.floor(self.lmbda/2)
-        a = 1 # Original author uses 1/2 in tutorial and 1 in publication
-        self.weights = np.array([np.log(self.mu+a) - np.log(np.arange(1, self.mu+1))]).T
-        self.weights /= sum(self.weights)
-        self.mueff = sum(self.weights)**2/sum(self.weights**2)
-
-        # Step-size control
-        self.cs = (self.mueff + 2) / (self.n + self.mueff + 5)
-        self.damps = 1 + 2 * max(0, np.sqrt((self.mueff - 1)/(self.n + 1)) - 1) + self.cs
-
-        # Covariance matrix adaptation
-        self.cc = (4 + self.mueff / self.n)/(self.n + 4 + 2 * self.mueff / self.n)
-        self.acov = 2
-        self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
-        self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov*self.mueff/2))
-
-        # Defining 'holder' variable for post processing and plotting.
-        self._misfit_holder = np.zeros((int(self.lmbda),1))
+    def _setup_caches(self):
+        """ Initializes caches and logging variables for performance tracking. """
+        self.cache_size = 10  # Number of iterations to cache
+        self.cache_counter = 0  # To keep track of cached iterations
+        self.mutants_cache = np.zeros((self.n + 1, self.lmbda * self.cache_size))  # For storing [parameters + misfit]
         self.mutants_logger_list = pd.DataFrame()
         self.mean_logger_list = pd.DataFrame()
 
-        # INITIALIZATION
-        self.ps = np.zeros_like(self.xmean)
-        self.pc = np.zeros_like(self.xmean)
-        self.B = np.eye(self.n,self.n)
-        self.D = np.ones((self.n, 1))
-        self.C = self.B @ np.diag(self.D[:,0]**2) @ self.B.T
-        self.invsqrtC = self.B @ np.diag(self.D[:,0]**-1) @ self.B.T
-        self.eigeneval = 0
-        self.chin = self.n**0.5 * (1 - 1 / ( 4 * self.n) + 1 / (21 * self.n**2))
-        self.mutants = np.zeros((self.n, self.lmbda))
+        # Define holder variables for post-processing and plotting
+        self._misfit_holder = np.zeros((int(self.lmbda), 1))
+        self.fig = None
+        self.ax = None
 
-    # Where the CMA-ES Routine happens --------------------------------------------------------------
+    # Where the mutants are generated ... --------------------------------------------------------------
     def draw_mutants(self):
-        '''
-        draw_mutants method
+        """
+        Draws mutants from a Gaussian distribution and scatters them across MPI processes.
         
-        This function is responsible for drawing `self.lmbda` mutants from a Gaussian distribution on the root process. 
-        It also applies the corresponding repair method for each of the parameters and then scatters the splitted list of mutants across all the computing processes.
+        This function generates `self.lmbda` mutants from a multivariate normal distribution, applies bounds
+        and repair methods where necessary, and scatters the mutants to all processes for parallel evaluation.
 
-        .. rubric:: Attributes
-
-        self.lmbda (int):
-            The number of mutants to be generated.
-        self.xmean (array):
-            The mean value of the distribution from which mutants are drawn.
-        self.sigma (float):
-            The standard deviation of the distribution.
-        self.B (array):
-            Eigenvectors of the covariance matrix (directions).
-        self.D (array):
-            Eigenvalues of the covariance matrix (amplitudes).
-        self.n (int):
-            Number of parameter to be inverted.
-        self.mutants (array):
-            The generated mutants. Each column corresponds to a mutant.
-        self._parameters (list):
-            A list of parameter objects, where each parameter has its own repair method.
-        self.size (int):
-            The number of processes.
-        self.mutant_lists (list):
-            A list of mutants divided amongst all processes.
-        self.counteval (int):
-            Counter for the total number of misfit evaluations.
-        '''
-
+        Returns
+        -------
+        None
+        """
         if self.rank == 0:
-            # Hardcode the bounds of CMA-ES search. This forces the relative scaling between parameters.
-            bounds = [0,10]
+            # Generate mutants on the root process
+            self._generate_mutants()
 
-            # Randomly draw initial mutants from a Gaussian distribution
-            for i in range(self.lmbda):
-                mutant = self.xmean + self.sigma * self.B @ (self.D * np.random.randn(self.n,1))
-                self.mutants[:,i] = mutant.T
+            # Apply repairs and redraws parameter by parameter
+            self._repair_and_redraw_mutants()
 
-            # Loop through all parameters to get their repair methods
-            for _i, param in enumerate(self.mutants):
-                if not self._parameters[_i].repair == None:
-                    # If samples are out of the [0,10] range, apply repair method
-                    while array_in_bounds(self.mutants[_i], bounds[0], bounds[1]) == False:
-                        print('repairing '+self._parameters[_i].name+' with '+self._parameters[_i].repair+' method')
-                        Repair(self._parameters[_i].repair, self.mutants[_i], self.xmean[_i])
-
-            # Split the list of mutants evenly across all processes
-            self.mutant_lists = np.array_split(self.mutants, self.size, axis=1)
+            # Scatter mutants to all processes
+            self._scatter_mutants()
         else:
-            self.mutant_lists = None
-        # Scatter the splited mutant_lists across processes.
-        self.scattered_mutants = self.comm.scatter(self.mutant_lists, root=0)
+            # Receive mutants on non-root processes
+            self._receive_mutants()
 
-        # Increase the counter of misfit evaluations (each mutant drawn now will be evaluated once)
+        # Slice the data for the current process
+        self.scattered_mutants = self.mutant_slice
+
+        # Increase the counter for misfit evaluations (each mutant will be evaluated once)
         self.counteval += self.lmbda
-    # Evaluate the misfit for each mutant of the population.
+
+    def _generate_mutants(self):
+        """Generates all `self.lmbda` mutants from a Gaussian distribution."""
+        for i in range(self.lmbda):
+            mutant = self._draw_single_mutant()
+            self.mutants[:, i] = mutant.flatten()
+
+    def _draw_single_mutant(self):
+        """Draws a single mutant from the Gaussian distribution."""
+        return self.xmean + self.sigma * self.B @ (self.D * np.random.randn(self.n, 1))
+
+    def _repair_and_redraw_mutants(self):
+        """Applies repair methods and redraws to all mutants, parameter by parameter."""
+        bounds = [0, 10]  # Define the hardcoded bounds
+        redraw_counter = 0
+
+        # Iterate over each parameter (column)
+        for param_idx in range(self.n):
+            # Extract the full array of parameter values for this parameter across all mutants
+            param_values = self.mutants[param_idx, :]
+
+            # First, check if any repair or redraw is needed
+            if array_in_bounds(param_values, bounds[0], bounds[1]):
+                continue  # Skip if all values are already in bounds
+
+            # Check if repair is defined for this parameter
+            if self._parameters[param_idx].repair is None:
+                # Redraw only the out-of-bounds parameter values across all mutants
+                self.mutants[param_idx, :], was_redrawn = self._redraw_param_until_valid(param_values, bounds)
+                if was_redrawn:
+                    redraw_counter += 1
+                print(f'Redrawn {redraw_counter} out-of-bounds mutants for parameter {self._parameters[param_idx].name}')
+            else:
+                # Apply repair method to the entire array of parameter values across all mutants
+                self.mutants[param_idx, :] = self._apply_repair_to_param(param_values, bounds, param_idx)
+
+    def _redraw_param_until_valid(self, param_values, bounds):
+        """Redraws the out-of-bounds values of a parameter array until they are within bounds."""
+        was_redrawn = False
+        for i in range(len(param_values)):
+            while not in_bounds(param_values[i], bounds[0], bounds[1]):
+                param_values[i] = np.random.randn()  # Redraw only for the specific out-of-bounds value
+                was_redrawn = True
+        return param_values, was_redrawn
+
+    def _apply_repair_to_param(self, param_values, bounds, param_idx):
+        """Applies a repair method to the full array of parameter values if defined."""
+        param = self._parameters[param_idx]
+        printed_repair = False
+        # Keep applying repair until all values in the array are within bounds
+        while not array_in_bounds(param_values, bounds[0], bounds[1]):
+            if self.verbose_level >= 0 and not printed_repair:
+                print(f'Repairing parameter {param.name} using method {param.repair}')
+                printed_repair = True
+            Repair(param.repair, param_values, self.xmean[param_idx])
+        
+        return param_values
+
+    def _scatter_mutants(self):
+        """Splits and scatters the mutants across processes."""
+        self.mutant_lists = np.array_split(self.mutants, self.size, axis=1)
+        self.mutant_slice = self.comm.scatter(self.mutant_lists, root=0)
+
+    def _receive_mutants(self):
+        """Receives scattered mutants on non-root processes."""
+        self.mutant_slice = self.comm.scatter(None, root=0)
+
+
+    # Where the mutants are evaluated ... --------------------------------------------------------------
     def eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False):
         """
         eval_fitness method
@@ -244,7 +319,7 @@ class CMA_ES(object):
             # Check if latitude longitude AND depth are absent from the parameters list
             if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
                 # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
-                if self.rank == 0 and verbose == True:
+                if self.rank == 0 and self.verbose_level >= 1:
                     print('using catalog origin')
                 self.origins = [self.catalog_origin]
 
@@ -265,7 +340,7 @@ class CMA_ES(object):
                 
                 self.local_misfit_val = misfit(data, self.local_greens, self.sources)
                 self.local_misfit_val = np.asarray(self.local_misfit_val).T
-                if verbose == True:
+                if self.verbose_level >= 2:
                     print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
 
                 # Gather local misfit values
@@ -277,10 +352,10 @@ class CMA_ES(object):
                 return self.misfit_val.T
             # If one of the three is present, create a list of origins (one for each mutant), and load the corresponding local greens functions.
             else:
-                if self.rank == 0 and verbose == True:
+                if self.rank == 0 and self.verbose_level >= 1:
                     print('creating new origins list')
                 self.create_origins()
-                if verbose == True:
+                if self.verbose_level >= 2:
                     for X in self.origins:
                         print(X)
                 # Load, convolve and process local greens function
@@ -300,7 +375,7 @@ class CMA_ES(object):
                 if self.rank == 0:
                     print("Processing: " + str(end_time-start_time))
                 # DEBUG PRINT to check what is happening on each process: print the number of greens functions loaded on each process
-                if verbose == True:
+                if self.verbose_level >= 2:
                     print("Number of greens functions loaded on process", self.rank, ":", len(self.local_greens))
 
 
@@ -310,7 +385,7 @@ class CMA_ES(object):
                 self.local_misfit_val = np.asarray(self.local_misfit_val).T[0]
                 end_time = MPI.Wtime()
 
-                if verbose == True:
+                if self.verbose_level >= 2:
                     print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
 
                 if self.rank == 0:
@@ -327,13 +402,13 @@ class CMA_ES(object):
             # Check if latitude longitude AND depth are absent from the parameters list
             if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
                 # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
-                if self.rank == 0 and verbose == True:
+                if self.rank == 0 and self.verbose_level >= 1:
                     print('using catalog origin')
                 self.origins = [self.catalog_origin]
                 self.local_greens = db_or_greens_list
                 self.local_misfit_val = misfit(data, self.local_greens, self.sources)
                 self.local_misfit_val = np.asarray(self.local_misfit_val).T
-                if verbose == True:
+                if self.verbose_level >= 2:
                     print("local misfit is :", self.local_misfit_val)
 
                 # Gather local misfit values
@@ -348,7 +423,8 @@ class CMA_ES(object):
                 if self.rank == 0:
                     print('WARNING: Greens mode is not compatible with latitude, longitude or depth parameters. Consider using a local Axisem database instead.')
                 return None
-    # Gather the mutants from each process and concatenate them into a single array.
+    
+    # Where the mutants are gathered ... --------------------------------------------------------------
     def gather_mutants(self, verbose=False):
         '''
         gather_mutants method
@@ -379,14 +455,14 @@ class CMA_ES(object):
         '''
 
         # Printing the mutants on each process, their shapes and types for debugging purposes
-        if verbose == True:
+        if self.verbose_level >= 2:
             print(self.scattered_mutants, '\n', 'shape is', np.shape(self.scattered_mutants), '\n', 'type is', type(self.scattered_mutants))
 
 
         self.mutants = self.comm.gather(self.scattered_mutants, root=0)
         if self.rank == 0:
             self.mutants = np.concatenate(self.mutants, axis=1)
-            if verbose == True:
+            if self.verbose_level >= 2:
                 print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', type(self.mutants)) # - DEBUG PRINT
         else:
             self.mutants = None
@@ -395,7 +471,7 @@ class CMA_ES(object):
         self.transformed_mutants = self.comm.gather(self.transformed_mutants, root=0)
         if self.rank == 0:
             self.transformed_mutants = np.concatenate(self.transformed_mutants, axis=1)
-            if verbose == True:
+            if self.verbose_level >= 2:
                 print(self.transformed_mutants, '\n', 'shape is', np.shape(self.transformed_mutants), '\n', 'type is', type(self.transformed_mutants)) # - DEBUG PRINT
         else:
             self.transformed_mutants = None
