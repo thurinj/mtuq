@@ -88,7 +88,7 @@ class Repair:
             self.transformation()
         elif self.method == 'projection_to_midpoint':
             # Call the projection_to_midpoint function
-            self.projection_to_midpoint()
+            print('Projection to midpoint repair method not implemented')
         elif self.method == 'rand_based':
             # Call the rand_based function
             self.rand_based()
@@ -98,6 +98,9 @@ class Repair:
         elif self.method == 'midpoint_target':
             # Call the rebound function
             self.midpoint_target()
+        elif self.method == 'conservative':
+            # Call the conservative function
+            self.conservative()
         else:
             print('Repair method not recognized')
 
@@ -154,16 +157,16 @@ class Repair:
         self.data_array[mask_4] = self.lower_bound + (self.data_array[mask_4] - (self.lower_bound-al))**2/(4*al)
         self.data_array[mask_5] = self.upper_bound - (self.data_array[mask_5] - (self.upper_bound-au))**2/(4*al)
 
+    # Removed due to being too impractical to implement in the current context.
+    # def projection_to_midpoint(self):
+    #     """
+    #     Project the particles onto the domain using the midpoint method (also reffered to as the Scaled Mutant)
+    #     Get the farthest out-of-bounds mutant
+    #     """
+    #     largest_outlier = self.data_array[np.argmax(np.sqrt((self.data_array-(self.lower_bound+self.upper_bound)/2)**2))]
 
-    def projection_to_midpoint(self):
-        """
-        Project the particles onto the domain using the midpoint method (also reffered to as the Scaled Mutant)
-        Get the farthest out-of-bounds mutant
-        """
-        largest_outlier = self.data_array[np.argmax(np.sqrt((self.data_array-(self.lower_bound+self.upper_bound)/2)**2))]
-
-        alpha = np.abs(((self.lower_bound+self.upper_bound)/2)/(largest_outlier - (self.lower_bound+self.upper_bound)/2))
-        self.data_array[:] = ((1-alpha)*5 + alpha*self.data_array[:])
+    #     alpha = np.abs(((self.lower_bound+self.upper_bound)/2)/(largest_outlier - (self.lower_bound+self.upper_bound)/2))
+    #     self.data_array[:] = ((1-alpha)*5 + alpha*self.data_array[:])
 
     def rand_based(self):
         """
@@ -175,10 +178,21 @@ class Repair:
 
     def midpoint_base(self):
         """
-        The infeasible coordinate value is replaced by the midpoint between the base value and the violated boundary.
+        The infeasible coordinate value is replaced by the midpoint between its current position and the violated boundary.
+        Ensures that the resulting points are within the bounds.
         """
-        self.data_array[self.l_oob] = (self.mean + self.lower_bound)/2
-        self.data_array[self.u_oob] = (self.mean + self.upper_bound)/2
+        # For lower out-of-bounds values, move them towards the midpoint between their position and the lower bound
+        self.data_array[self.l_oob] = (self.data_array[self.l_oob] + self.lower_bound) / 2
+        
+        # Ensure they are within bounds
+        self.data_array[self.l_oob] = np.maximum(self.data_array[self.l_oob], self.lower_bound)
+        
+        # For upper out-of-bounds values, move them towards the midpoint between their position and the upper bound
+        self.data_array[self.u_oob] = (self.data_array[self.u_oob] + self.upper_bound) / 2
+        
+        # Ensure they are within bounds
+        self.data_array[self.u_oob] = np.minimum(self.data_array[self.u_oob], self.upper_bound)
+
 
     def midpoint_target(self):
         """
@@ -187,3 +201,11 @@ class Repair:
         target = 5
         self.data_array[self.l_oob] = (target + self.lower_bound)/2
         self.data_array[self.u_oob] = (target + self.upper_bound)/2
+
+    def conservative(self):
+        """
+        The infeasible solution is replaced by the distribution mean.
+        """
+        self.data_array[self.l_oob] = self.mean
+        self.data_array[self.u_oob] = self.mean
+    
