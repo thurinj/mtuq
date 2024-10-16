@@ -12,19 +12,7 @@ from mtuq.stochastic_sampling.cmaes_fitness_evaluation import CMAESFitnessEvalua
 from mtuq.stochastic_sampling.cmaes_plotting import CMAESPlotting
 from mtuq.util.math import to_mij, to_rtp, to_gamma, to_delta, wrap_180
 from mtuq import MTUQDataFrame
-from mtuq.grid.moment_tensor import UnstructuredGrid
-from mtuq.grid.force import UnstructuredGrid
-from mtuq.graphics import plot_data_greens2, plot_data_greens1
-from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
-from mtuq.greens_tensor.base import GreensTensorList
-from mtuq.dataset import Dataset
-from mtuq.event import MomentTensor, Force, Origin
-from mtuq.graphics.uq._matplotlib import _hammer_projection, _generate_lune, _generate_sphere
 from mtuq.graphics import plot_combined, plot_misfit_force
-from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
-from mtuq.misfit import Misfit, PolarityMisfit
-from mtuq.misfit.waveform import c_ext_L2, calculate_norm_data 
-from mtuq.process_data import ProcessData
 import copy
 
 
