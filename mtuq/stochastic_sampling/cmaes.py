@@ -14,18 +14,19 @@ from mtuq.graphics import plot_data_greens2, plot_data_greens1
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 from mtuq.greens_tensor.base import GreensTensorList
 from mtuq.dataset import Dataset
-from mtuq.event import MomentTensor, Force
+from mtuq.event import MomentTensor, Force, Origin
 from mtuq.graphics.uq._matplotlib import _hammer_projection, _generate_lune, _generate_sphere
 from mtuq.graphics import plot_combined, plot_misfit_force
 from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
 from mtuq.misfit import Misfit, PolarityMisfit
-from mtuq.misfit.waveform import calculate_norm_data 
+from mtuq.misfit.waveform import c_ext_L2, calculate_norm_data 
 from mtuq.process_data import ProcessData
+import copy
 
 
 class CMA_ES(object):
 
-    def __init__(self, parameters_list: list, lmbda: int = None, origin=None, callback_function=None, event_id: str = '', verbose_level: int = 0):
+    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
         '''
         parallel_CMA_ES class
 
@@ -96,6 +97,10 @@ class CMA_ES(object):
         # Ensure that the number of MPI processes is not greater than the population size
         if self.size > self.lmbda:
             raise ValueError(f'Number of MPI processes ({self.size}) exceeds population size ({self.lmbda})')
+
+        # Validate the origin parameter
+        if not isinstance(origin, Origin):
+            raise ValueError("The 'origin' parameter must be an instance of mtuq.event.Origin. Please provide a valid object to be used as catalog origin.")
 
         # Set the origin for the inversion
         self.catalog_origin = origin
@@ -336,7 +341,6 @@ class CMA_ES(object):
 
                 # Rank 0 broadcasts the data to the others
                 self.local_greens = self.comm.bcast(self._greens_tensors_cache[key], root=0)
-
                 
                 self.local_misfit_val = misfit(data, self.local_greens, self.sources)
                 self.local_misfit_val = np.asarray(self.local_misfit_val).T
@@ -404,9 +408,34 @@ class CMA_ES(object):
                 # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
                 if self.rank == 0 and self.verbose_level >= 1:
                     print('using catalog origin')
-                self.origins = [self.catalog_origin]
+                # self.origins = [self.catalog_origin]
                 self.local_greens = db_or_greens_list
-                self.local_misfit_val = misfit(data, self.local_greens, self.sources)
+
+                # Get cached arrays using misfit hash and run c_ext_L2.misfit using values from the cache
+                # For some reason, the results are not the same if we use the cache from iteration 0. 
+                # This is why the cache is create and used from iteration 1 onwards.
+                if hasattr(self, 'data_cache'):
+                    if self.verbose_level >= 1:
+                        print("Using cached data")
+                    hashkey = hash(misfit)
+                    cache = self.data_cache.get(hashkey)
+                    data_data = cache['data_data']
+                    greens_data = cache['greens_data']
+                    greens_greens = cache['greens_greens']
+                    groups = cache['groups']
+                    weights = cache['weights']
+                    hybrid_norm = cache['hybrid_norm']
+                    dt = cache['dt']
+                    padding = cache['padding']
+                    debug_level = 0
+                    msg_args = [0, 0, 0]
+                    self.local_misfit_val = c_ext_L2.misfit(data_data, greens_data, greens_greens, self.sources, groups, weights, hybrid_norm, dt, padding[0], padding[1], debug_level, *msg_args)
+                else:
+                    if self.verbose_level >= 1:
+                        print("First iteration, calculating misfit using misfit object")
+                    self.local_misfit_val = misfit(data, self.local_greens, self.sources)
+
+
                 self.local_misfit_val = np.asarray(self.local_misfit_val).T
                 if self.verbose_level >= 2:
                     print("local misfit is :", self.local_misfit_val)
@@ -763,6 +792,104 @@ class CMA_ES(object):
             )
             return(MTUQDataFrame(da))
 
+    def _prep_and_cache_C_arrays(self, data, greens, misfit, stations):
+        """
+        Helper function to prepare and cache C compatible arrays for the misfit function evaluation. 
+
+        It is responsible for preparing the data arrays for the inversion, in a format expected by the lower-level 
+        c-code for misfit evaluation. Mostly copy-pasted from mtuq.misfit.waveform.level2
+
+        Only used when the mode is 'greens'.
+        """
+
+        from mtuq.misfit.waveform.level2 import _get_time_sampling, _get_stations, \
+        _get_components, _get_weights, _get_groups, _get_data, _get_greens, \
+        _get_padding, _autocorr_1, _autocorr_2, _corr_1_2
+        from mtuq.util import Null
+
+        msg_handle = Null()
+        # If no attributes are present, create the dictionaries
+        if not hasattr(self, 'data_cache'):
+            self.data_cache = {}
+
+        # Use the misfit object __hash__ method to create a unique key for the data_cache dictionary.
+        key = hash(misfit)
+
+        # If the key is not present in the data_cache, prepare the data arrays for the inversion before caching them.
+        if key not in self.data_cache:
+
+            # Precompute the data arrays for the inversion before caching them.
+            nt, dt = _get_time_sampling(data)
+            stations = _get_stations(data)
+            components = _get_components(data)
+
+            weights = _get_weights(data, stations, components)
+
+            # which components will be used to determine time shifts (boolean array)?
+            groups = _get_groups(misfit.time_shift_groups, components)
+
+            # Set include_mt and include_force based on the mode
+            if self.mode in ['mt', 'mt_dc', 'mt_dev']:
+                for g in greens:
+                    g.include_mt = True
+                    g.include_force = False
+            elif self.mode == 'force':
+                for g in greens:
+                    g.include_mt = False
+                    g.include_force = True
+            else:
+                raise ValueError("Invalid mode. Supported modes: 'mt', 'mt_dc', 'mt_dev', 'force'.")
+
+            #
+            # collapse main structures into NumPy arrays
+            #
+            data = _get_data(data, stations, components)
+            greens = _get_greens(greens, stations, components)
+
+
+            #
+            # cross-correlate data and synthetics
+            #
+            padding = _get_padding(misfit.time_shift_min, misfit.time_shift_max, dt)
+            data_data = _autocorr_1(data)
+            greens_greens = _autocorr_2(greens, padding)
+            greens_data = _corr_1_2(data, greens, padding)
+
+            if misfit.norm=='hybrid':
+                hybrid_norm = 1
+            else:
+                hybrid_norm = 0
+
+            #
+            # collect message attributes
+            #
+            try:
+                msg_args = [getattr(msg_handle, attrib) for attrib in 
+                    ['start', 'stop', 'percent']]
+            except:
+                msg_args = [0, 0, 0]
+
+            # Cache the data arrays for the inversion to be called by c_ext_L2.misfit(data_data, greens_data, greens_greens, sources, groups, weights, hybrid_norm, dt, padding[0], padding[1], debug_level, *msg_args)
+            self.data_cache[key] = {
+                'data_data': data_data,
+                'greens_data': greens_data,
+                'greens_greens': greens_greens,
+                'groups': groups,
+                'weights': weights,
+                'hybrid_norm': hybrid_norm,
+                'dt': dt,
+                'padding': padding,
+                'msg_args': msg_args
+            }
+        
+        elif key in self.data_cache:
+            if self.verbose_level >= 2:
+                print('Data arrays already cached. Nothing to do here.')
+            pass
+    
+    # def _prepare_and_cache_green_green(self):
+
+    # Main method responsible for the inversion ----------------------------------------
     def Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, **kwargs):
         """
         Solves for the best-fitting source model using the CMA-ES algorithm. This is the master method used in inversions. 
@@ -805,6 +932,9 @@ class CMA_ES(object):
         This method is the wrapper that automate the execution of the CMA-ES algorithm. It is the default workflow for Moment tensor and Force inversion and should not work with a "custom" inversion (multiple-sub events, source time function, etc.). It interacts with the  `draw_mutants`, `eval_fitness`, `gather_mutants`, `fitness_sort`, `update_mean`, `update_step_size` and `update_covariance`. 
         """
 
+        greens_cache = {}
+        data_cache = {}
+
         if self.rank == 0:
             # Check Solve inputs
             self._check_Solve_inputs(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, wavelet, plot_interval, iter_count)
@@ -829,10 +959,7 @@ class CMA_ES(object):
             self.draw_mutants()
 
             misfits = []
-            for j in range(len(data_list)):
-                current_data = data_list[j]
-                current_misfit = misfit_list[j]
-                
+            for j, (current_data, current_misfit, process) in enumerate(zip(data_list, misfit_list, process_list)):
                 mode = 'db' if isinstance(db_or_greens_list, AxiSEM_Client) else 'greens'
                 # get greens[j] or db depending on mode from db_or_greens_list
                 greens = db_or_greens_list[j] if mode == 'greens' else None
@@ -841,15 +968,16 @@ class CMA_ES(object):
                 if mode == 'db':
                     misfit_values = self.eval_fitness(current_data, stations, current_misfit, db, process_list[j], wavelet, **kwargs)
                 elif mode == 'greens':
+                    if i == 1: 
+                        raw_greens_to_cache = copy.deepcopy(greens)
+                        raw_data_to_cache = copy.deepcopy(current_data)
+                        self._prep_and_cache_C_arrays(raw_data_to_cache, raw_greens_to_cache, current_misfit, stations)
                     misfit_values = self.eval_fitness(current_data, stations, current_misfit, greens,  **kwargs)
 
                 norm = self._get_data_norm(current_data, current_misfit)
-                
-                misfit_values = misfit_values/norm                    
+                misfit_values /= norm
                 misfits.append(misfit_values)
 
-                # Print the local lists on each process:
-                # print('Misfit on process %d: %s' % (self.rank, str(misfit_values))) # Can be made into a debug print in the future
 
             weighted_misfits = [w * m for w, m in zip(misfit_weights, misfits)]
             total_missfit = sum(weighted_misfits)
@@ -860,7 +988,7 @@ class CMA_ES(object):
             self.update_step_size()
             self.update_covariance()
 
-            if i == 0 or i % plot_interval == 0 or i == max_iter - 1:
+            if i != 0 and i % plot_interval == 0 or i == max_iter - 1:
                 if self.rank == 0:
                     self.plot_mean_waveforms(data_list, process_list, misfit_list, stations, db_or_greens_list)
                     if self.mode in ['mt', 'mt_dc', 'mt_dev']:
