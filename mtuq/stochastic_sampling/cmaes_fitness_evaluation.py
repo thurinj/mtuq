@@ -31,12 +31,17 @@ class CMAESFitnessEvaluation:
         self.misfit_val = None
         self._misfit_holder = None
         self.scattered_mutants = None  # Initialize scattered_mutants
+        self.mode = None  # Initialize mode
+        self.parameters_names = [param.name for param in parameters]  # Initialize parameters_names
+        self.transformed_mutants = None  # Initialize transformed_mutants
+        self.mij_args = None  # Initialize mij_args
 
     def eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False):
         self._check_greens_input_combination(db_or_greens_list, process, wavelet)
         mode = 'db' if isinstance(db_or_greens_list, AxiSEM_Client) else 'greens'
         self._transform_mutants()
         self._generate_sources()
+        self.set_scattered_mutants(self.scattered_mutants)  # Update scattered_mutants dynamically
 
         if mode == 'db':
             if not any(x in self.parameters_names for x in ['depth', 'latitude', 'longitude']):
