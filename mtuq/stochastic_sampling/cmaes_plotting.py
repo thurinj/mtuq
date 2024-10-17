@@ -8,24 +8,11 @@ from mtuq.grid.base import UnstructuredGrid
 from mtuq.misfit.polarity import PolarityMisfit
 from mtuq.util.math import to_gamma, to_delta, wrap_180
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
+from mtuq.stochastic_sampling.cmaes_base import CMAESBase
 
-class CMAESPlotting:
+class CMAESPlotting(CMAESBase):
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache):
-        self.parameters = parameters
-        self.xmean = xmean
-        self.sigma = sigma
-        self.B = B
-        self.D = D
-        self.n = n
-        self.lmbda = lmbda
-        self.size = size
-        self.rank = rank
-        self.comm = comm
-        self.verbose_level = verbose_level
-        self.callback = callback
-        self.catalog_origin = catalog_origin
-        self.greens_tensors_cache = greens_tensors_cache
-        self.counteval = 0
+        super().__init__(parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache)
         self.transformed_mutants = None
         self.sources = None
         self.origins = None

@@ -1,11 +1,11 @@
 import pandas as pd
 import numpy as np
 from mpi4py import MPI
-
 from mtuq.util.math import to_mij, to_rtp
 from mtuq.event import Origin
+from mtuq.stochastic_sampling.cmaes_base import CMAESBase
 
-class CMAESInitialization:
+class CMAESInitialization(CMAESBase):
     def __init__(self, parameters_list, lmbda, origin, callback_function, event_id, verbose_level):
         self._initialize_mpi_communicator()
         self._initialize_logging(event_id, verbose_level)

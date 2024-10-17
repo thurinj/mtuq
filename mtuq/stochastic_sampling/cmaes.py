@@ -28,9 +28,10 @@ from mtuq.misfit.waveform import calculate_norm_data
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 from mtuq.greens_tensor.base import GreensTensorList
 import copy
+from mtuq.stochastic_sampling.cmaes_base import CMAESBase
 
 
-class CMA_ES(object):
+class CMA_ES(CMAESBase):
 
     def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
         '''

@@ -1,20 +1,11 @@
 import numpy as np
 from mtuq.stochastic_sampling.cmaes_utils import linear_transform, inverse_linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
+from mtuq.stochastic_sampling.cmaes_base import CMAESBase
 
 
-class CMAESMutantGeneration:
+class CMAESMutantGeneration(CMAESBase):
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level):
-        self.parameters = parameters
-        self.xmean = xmean
-        self.sigma = sigma
-        self.B = B
-        self.D = D
-        self.n = n
-        self.lmbda = lmbda
-        self.size = size
-        self.rank = rank
-        self.comm = comm
-        self.verbose_level = verbose_level
+        super().__init__(parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, None, None, None)
         self.mutants = np.zeros((self.n, self.lmbda))
 
     def draw_mutants(self):
@@ -25,6 +16,7 @@ class CMAESMutantGeneration:
         else:
             self._receive_mutants()
         self.scattered_mutants = self.mutant_slice
+        self.set_scattered_mutants(self.scattered_mutants)  # Update scattered_mutants in CMAESBase
 
     def _generate_mutants(self):
         for i in range(self.lmbda):

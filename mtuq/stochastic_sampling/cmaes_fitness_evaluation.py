@@ -5,24 +5,11 @@ from mtuq.greens_tensor.base import GreensTensorList
 from mtuq.stochastic_sampling.cmaes_utils import linear_transform, inverse_linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 from mtuq.misfit.waveform import c_ext_L2
+from mtuq.stochastic_sampling.cmaes_base import CMAESBase
 
-class CMAESFitnessEvaluation:
+class CMAESFitnessEvaluation(CMAESBase):
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache):
-        self.parameters = parameters
-        self.xmean = xmean
-        self.sigma = sigma
-        self.B = B
-        self.D = D
-        self.n = n
-        self.lmbda = lmbda
-        self.size = size
-        self.rank = rank
-        self.comm = comm
-        self.verbose_level = verbose_level
-        self.callback = callback
-        self.catalog_origin = catalog_origin
-        self.greens_tensors_cache = greens_tensors_cache
-        self.counteval = 0
+        super().__init__(parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache)
         self.transformed_mutants = None
         self.sources = None
         self.origins = None
@@ -30,11 +17,6 @@ class CMAESFitnessEvaluation:
         self.local_misfit_val = None
         self.misfit_val = None
         self._misfit_holder = None
-        self.scattered_mutants = None  # Initialize scattered_mutants
-        self.mode = None  # Initialize mode
-        self.parameters_names = [param.name for param in parameters]  # Initialize parameters_names
-        self.transformed_mutants = None  # Initialize transformed_mutants
-        self.mij_args = None  # Initialize mij_args
 
     def eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False):
         self._check_greens_input_combination(db_or_greens_list, process, wavelet)
