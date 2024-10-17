@@ -1,8 +1,8 @@
 import numpy as np
-import pandas as pd
-from mpi4py import MPI
+import pandas as pd # type: ignore
+from mpi4py import MPI # type: ignore
 
-import matplotlib
+import matplotlib  # type: ignore
 matplotlib.use('Agg')
 
 from mtuq.stochastic_sampling.cmaes_utils import *
@@ -25,7 +25,7 @@ from mtuq.grid import UnstructuredGrid
 from mtuq.graphics import plot_data_greens2, plot_data_greens1
 from mtuq.graphics.uq._matplotlib import _generate_lune, _generate_sphere, _hammer_projection
 from mtuq.misfit.waveform import calculate_norm_data
-from mtuq.io.clients.AxiSEM_NetCDF import AxiSEM_Client
+from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 from mtuq.greens_tensor.base import GreensTensorList
 import copy
 

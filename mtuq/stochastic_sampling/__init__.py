@@ -1,3 +1,2 @@
 from mtuq.stochastic_sampling.cmaes import CMA_ES
-from mtuq.stochastic_sampling.variable_encoder import CMAESParameters
-from mtuq.stochastic_sampling.cmaes_utils import initialize_mt, initialize_force
+from mtuq.stochastic_sampling.variable_encoder import CMAESParameters, initialize_mt, initialize_force

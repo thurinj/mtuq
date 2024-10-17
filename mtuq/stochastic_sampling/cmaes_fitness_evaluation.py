@@ -1,4 +1,10 @@
+import numpy as np
+import mpi4py.MPI as MPI
+
+from mtuq.greens_tensor.base import GreensTensorList
 from mtuq.stochastic_sampling.cmaes_utils import linear_transform, inverse_linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
+from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
+from mtuq.misfit.waveform import c_ext_L2
 
 class CMAESFitnessEvaluation:
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache):

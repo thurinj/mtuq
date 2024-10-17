@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import os
 import numpy as np
 
 from mtuq import read, open_db, download_greens_tensors
@@ -11,16 +10,8 @@ from mtuq.util import fullpath
 from mtuq.util.cap import parse_station_codes, Trapezoid
 from mtuq.stochastic_sampling import initialize_mt
 from mtuq.stochastic_sampling.cmaes import CMA_ES
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # type: ignore
 from mtuq.util.math import to_gamma, to_delta
-from mtuq.graphics.uq.lune import plot_misfit_lune
-from mtuq.graphics.uq._matplotlib import _plot_lune_matplotlib
-from mtuq.graphics import plot_combined
-from mtuq.stochastic_sampling.cmaes_initialization import CMAESInitialization
-from mtuq.stochastic_sampling.cmaes_mutant_generation import CMAESMutantGeneration
-from mtuq.stochastic_sampling.cmaes_fitness_evaluation import CMAESFitnessEvaluation
-from mtuq.stochastic_sampling.cmaes_plotting import CMAESPlotting
-from mtuq.stochastic_sampling.cmaes_utils import linear_transform, inverse_linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
 
 def plot_lune(CMA, p):
     ''' Temporary function to plot the lune distribution of mutants. This

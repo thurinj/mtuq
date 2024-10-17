@@ -1,4 +1,6 @@
+import numpy as np
 from mtuq.stochastic_sampling.cmaes_utils import linear_transform, inverse_linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
+
 
 class CMAESMutantGeneration:
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level):

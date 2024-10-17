@@ -1,6 +1,13 @@
+import numpy as np
+
+from mtuq.event import Force, MomentTensor
 from mtuq.graphics import plot_data_greens2, plot_misfit_force
-from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
+from mtuq.graphics.uq._matplotlib import _generate_lune, _generate_sphere, _hammer_projection, _plot_force_matplotlib
+from mtuq.graphics.waveforms import plot_data_greens1
+from mtuq.grid.base import UnstructuredGrid
+from mtuq.misfit.polarity import PolarityMisfit
 from mtuq.util.math import to_gamma, to_delta, wrap_180
+from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 
 class CMAESPlotting:
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache):
