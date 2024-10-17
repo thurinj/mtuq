@@ -1,3 +1,5 @@
+from mtuq.util.math import to_mij, to_rtp
+
 class CMAESInitialization:
     def __init__(self, parameters_list, lmbda, origin, callback_function, event_id, verbose_level):
         self._initialize_mpi_communicator()

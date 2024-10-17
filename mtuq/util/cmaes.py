@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 
@@ -208,4 +207,3 @@ class Repair:
         """
         self.data_array[self.l_oob] = self.mean
         self.data_array[self.u_oob] = self.mean
-    

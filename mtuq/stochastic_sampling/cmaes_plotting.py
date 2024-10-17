@@ -1,3 +1,7 @@
+from mtuq.graphics import plot_data_greens2, plot_misfit_force
+from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
+from mtuq.util.math import to_gamma, to_delta, wrap_180
+
 class CMAESPlotting:
     def __init__(self, parameters, xmean, sigma, B, D, n, lmbda, size, rank, comm, verbose_level, callback, catalog_origin, greens_tensors_cache):
         self.parameters = parameters
