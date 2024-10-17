@@ -23,7 +23,6 @@ class CMAESFitnessEvaluation(CMAESBase):
         mode = 'db' if isinstance(db_or_greens_list, AxiSEM_Client) else 'greens'
         self._transform_mutants()
         self._generate_sources()
-        self.set_scattered_mutants(self.scattered_mutants)  # Update scattered_mutants dynamically
 
         if mode == 'db':
             if not any(x in self.parameters_names for x in ['depth', 'latitude', 'longitude']):
@@ -181,6 +180,3 @@ class CMAESFitnessEvaluation(CMAESBase):
                 setattr(self.origins[-1], 'latitude', latitude[i])
             if 'longitude' in self.parameters_names:
                 setattr(self.origins[-1], 'longitude', longitude[i])
-
-    def set_scattered_mutants(self, scattered_mutants):
-        self.scattered_mutants = scattered_mutants

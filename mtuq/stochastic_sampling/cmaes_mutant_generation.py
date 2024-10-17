@@ -16,7 +16,6 @@ class CMAESMutantGeneration(CMAESBase):
         else:
             self._receive_mutants()
         self.scattered_mutants = self.mutant_slice
-        self.set_scattered_mutants(self.scattered_mutants)  # Update scattered_mutants in CMAESBase
 
     def _generate_mutants(self):
         for i in range(self.lmbda):
@@ -65,6 +64,3 @@ class CMAESMutantGeneration(CMAESBase):
 
     def _receive_mutants(self):
         self.mutant_slice = self.comm.scatter(None, root=0)
-
-    def get_scattered_mutants(self):
-        return self.scattered_mutants
