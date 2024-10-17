@@ -73,3 +73,6 @@ class CMAESMutantGeneration:
 
     def _receive_mutants(self):
         self.mutant_slice = self.comm.scatter(None, root=0)
+
+    def get_scattered_mutants(self):
+        return self.scattered_mutants

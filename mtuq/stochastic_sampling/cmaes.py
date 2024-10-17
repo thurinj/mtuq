@@ -98,6 +98,7 @@ class CMA_ES(object):
         """
         self.mutant_generation.draw_mutants()
         self.scattered_mutants = self.mutant_generation.scattered_mutants
+        self.fitness_evaluation.set_scattered_mutants(self.scattered_mutants)  # Update scattered_mutants in CMAESFitnessEvaluation
         self.initialization.counteval += self.initialization.lmbda
 
     # Where the mutants are evaluated ... --------------------------------------------------------------

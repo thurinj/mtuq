@@ -30,6 +30,7 @@ class CMAESFitnessEvaluation:
         self.local_misfit_val = None
         self.misfit_val = None
         self._misfit_holder = None
+        self.scattered_mutants = None  # Initialize scattered_mutants
 
     def eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False):
         self._check_greens_input_combination(db_or_greens_list, process, wavelet)
@@ -193,3 +194,6 @@ class CMAESFitnessEvaluation:
                 setattr(self.origins[-1], 'latitude', latitude[i])
             if 'longitude' in self.parameters_names:
                 setattr(self.origins[-1], 'longitude', longitude[i])
+
+    def set_scattered_mutants(self, scattered_mutants):
+        self.scattered_mutants = scattered_mutants
