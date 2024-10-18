@@ -5,7 +5,7 @@ from mpi4py import MPI
 import matplotlib
 matplotlib.use('Agg')
 
-from mtuq.stochastic_sampling.cmaes_utils import linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair
+from mtuq.stochastic_sampling.cmaes_utils import linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair, inverse_linear_transform
 from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms, _scatter_plot
 from mtuq.util.math import to_mij, to_rtp, to_gamma, to_delta, wrap_180
 from mtuq import MTUQDataFrame
