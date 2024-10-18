@@ -5,7 +5,8 @@ from mpi4py import MPI
 import matplotlib
 matplotlib.use('Agg')
 
-from mtuq.util.cmaes import *
+from mtuq.stochastic_sampling.cmaes_utils import linear_transform, logarithmic_transform, in_bounds, array_in_bounds, Repair, inverse_linear_transform
+from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms, _scatter_plot
 from mtuq.util.math import to_mij, to_rtp, to_gamma, to_delta, wrap_180
 from mtuq import MTUQDataFrame
 from mtuq.grid.moment_tensor import UnstructuredGrid
@@ -321,137 +322,144 @@ class CMA_ES(object):
         self._generate_sources()
 
         if mode == 'db':
-            # Check if latitude longitude AND depth are absent from the parameters list
-            if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
-                # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
-                if self.rank == 0 and self.verbose_level >= 1:
-                    print('using catalog origin')
-                self.origins = [self.catalog_origin]
-
-                key = self._get_greens_tensors_key(process)
-
-                # Only rank 0 fetches the data from the database
-                if self.rank == 0:
-                    if key not in self._greens_tensors_cache:
-                        self._greens_tensors_cache[key] = db_or_greens_list.get_greens_tensors(stations, self.origins)
-                        self._greens_tensors_cache[key].convolve(wavelet)
-                        self._greens_tensors_cache[key] = self._greens_tensors_cache[key].map(process)
-                else:
-                    self._greens_tensors_cache[key] = None
-
-                # Rank 0 broadcasts the data to the others
-                self.local_greens = self.comm.bcast(self._greens_tensors_cache[key], root=0)
-                
-                self.local_misfit_val = misfit(data, self.local_greens, self.sources)
-                self.local_misfit_val = np.asarray(self.local_misfit_val).T
-                if self.verbose_level >= 2:
-                    print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
-
-                # Gather local misfit values
-                self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
-                # Broadcast the gathered values and concatenate to return across processes.
-                self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
-                self.misfit_val = np.asarray(np.concatenate(self.misfit_val)).T
-                # self._misfit_holder += self.misfit_val.T
-                return self.misfit_val.T
-            # If one of the three is present, create a list of origins (one for each mutant), and load the corresponding local greens functions.
-            else:
-                if self.rank == 0 and self.verbose_level >= 1:
-                    print('creating new origins list')
-                self.create_origins()
-                if self.verbose_level >= 2:
-                    for X in self.origins:
-                        print(X)
-                # Load, convolve and process local greens function
-                start_time = MPI.Wtime()
-                self.local_greens = db_or_greens_list.get_greens_tensors(stations, self.origins)
-                end_time = MPI.Wtime()
-                if self.rank == 0:
-                    print("Fetching greens tensor: " + str(end_time-start_time))
-                start_time = MPI.Wtime()
-                self.local_greens.convolve(wavelet)
-                end_time = MPI.Wtime()
-                if self.rank == 0:
-                    print("Convolution: " + str(end_time-start_time))
-                start_time = MPI.Wtime()
-                self.local_greens = self.local_greens.map(process)
-                end_time = MPI.Wtime()
-                if self.rank == 0:
-                    print("Processing: " + str(end_time-start_time))
-                # DEBUG PRINT to check what is happening on each process: print the number of greens functions loaded on each process
-                if self.verbose_level >= 2:
-                    print("Number of greens functions loaded on process", self.rank, ":", len(self.local_greens))
-
-
-                # Compute misfit
-                start_time = MPI.Wtime()
-                self.local_misfit_val = [misfit(data, self.local_greens.select(origin), np.array([self.sources[_i]])) for _i, origin in enumerate(self.origins)]
-                self.local_misfit_val = np.asarray(self.local_misfit_val).T[0]
-                end_time = MPI.Wtime()
-
-                if self.verbose_level >= 2:
-                    print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
-
-                if self.rank == 0:
-                    print("Misfit: " + str(end_time-start_time))
-                # Gather local misfit values
-                self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
-                # Broadcast the gathered values and concatenate to return across processes.
-                self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
-                self.misfit_val = np.asarray(np.concatenate(self.misfit_val))
-                # self._misfit_holder += self.misfit_val
-                return self.misfit_val
-            
+            return self._eval_fitness_db(data, stations, misfit, db_or_greens_list, process, wavelet)
         elif mode == 'greens':
-            # Check if latitude longitude AND depth are absent from the parameters list
-            if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
-                # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
-                if self.rank == 0 and self.verbose_level >= 1:
-                    print('using catalog origin')
-                # self.origins = [self.catalog_origin]
-                self.local_greens = db_or_greens_list
+            return self._eval_fitness_greens(data, stations, misfit, db_or_greens_list)
 
-                # Get cached arrays using misfit hash and run c_ext_L2.misfit using values from the cache
-                # For some reason, the results are not the same if we use the cache from iteration 0. 
-                # This is why the cache is create and used from iteration 1 onwards.
-                if hasattr(self, 'data_cache'):
-                    if self.verbose_level >= 1:
-                        print("Using cached data")
-                    hashkey = hash(misfit)
-                    cache = self.data_cache.get(hashkey)
-                    data_data = cache['data_data']
-                    greens_data = cache['greens_data']
-                    greens_greens = cache['greens_greens']
-                    groups = cache['groups']
-                    weights = cache['weights']
-                    hybrid_norm = cache['hybrid_norm']
-                    dt = cache['dt']
-                    padding = cache['padding']
-                    debug_level = 0
-                    msg_args = [0, 0, 0]
-                    self.local_misfit_val = c_ext_L2.misfit(data_data, greens_data, greens_greens, self.sources, groups, weights, hybrid_norm, dt, padding[0], padding[1], debug_level, *msg_args)
-                else:
-                    if self.verbose_level >= 1:
-                        print("First iteration, calculating misfit using misfit object")
-                    self.local_misfit_val = misfit(data, self.local_greens, self.sources)
+    def _eval_fitness_db(self, data, stations, misfit, db_or_greens_list, process, wavelet):
+        """
+        Helper function to evaluate fitness for 'db' mode.
+        """
+        # Check if latitude longitude AND depth are absent from the parameters list
+        if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
+            # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
+            if self.rank == 0 and self.verbose_level >= 1:
+                print('using catalog origin')
+            self.origins = [self.catalog_origin]
 
+            key = self._get_greens_tensors_key(process)
 
-                self.local_misfit_val = np.asarray(self.local_misfit_val).T
-                if self.verbose_level >= 2:
-                    print("local misfit is :", self.local_misfit_val)
-
-                # Gather local misfit values
-                self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
-                # Broadcast the gathered values and concatenate to return across processes.
-                self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
-                self.misfit_val = np.asarray(np.concatenate(self.misfit_val)).T
-                # self._misfit_holder += self.misfit_val.T
-                return self.misfit_val.T
-            # If one of the three is present, issue a warning and break.
+            # Only rank 0 fetches the data from the database
+            if self.rank == 0:
+                if key not in self._greens_tensors_cache:
+                    self._greens_tensors_cache[key] = db_or_greens_list.get_greens_tensors(stations, self.origins)
+                    self._greens_tensors_cache[key].convolve(wavelet)
+                    self._greens_tensors_cache[key] = self._greens_tensors_cache[key].map(process)
             else:
-                if self.rank == 0:
-                    print('WARNING: Greens mode is not compatible with latitude, longitude or depth parameters. Consider using a local Axisem database instead.')
-                return None
+                self._greens_tensors_cache[key] = None
+
+            # Rank 0 broadcasts the data to the others
+            self.local_greens = self.comm.bcast(self._greens_tensors_cache[key], root=0)
+            
+            self.local_misfit_val = misfit(data, self.local_greens, self.sources)
+            self.local_misfit_val = np.asarray(self.local_misfit_val).T
+            if self.verbose_level >= 2:
+                print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
+
+            # Gather local misfit values
+            self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
+            # Broadcast the gathered values and concatenate to return across processes.
+            self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
+            self.misfit_val = np.asarray(np.concatenate(self.misfit_val)).T
+            return self.misfit_val.T
+        # If one of the three is present, create a list of origins (one for each mutant), and load the corresponding local greens functions.
+        else:
+            if self.rank == 0 and self.verbose_level >= 1:
+                print('creating new origins list')
+            self.create_origins()
+            if self.verbose_level >= 2:
+                for X in self.origins:
+                    print(X)
+            # Load, convolve and process local greens function
+            start_time = MPI.Wtime()
+            self.local_greens = db_or_greens_list.get_greens_tensors(stations, self.origins)
+            end_time = MPI.Wtime()
+            if self.rank == 0:
+                print("Fetching greens tensor: " + str(end_time-start_time))
+            start_time = MPI.Wtime()
+            self.local_greens.convolve(wavelet)
+            end_time = MPI.Wtime()
+            if self.rank == 0:
+                print("Convolution: " + str(end_time-start_time))
+            start_time = MPI.Wtime()
+            self.local_greens = self.local_greens.map(process)
+            end_time = MPI.Wtime()
+            if self.rank == 0:
+                print("Processing: " + str(end_time-start_time))
+            # DEBUG PRINT to check what is happening on each process: print the number of greens functions loaded on each process
+            if self.verbose_level >= 2:
+                print("Number of greens functions loaded on process", self.rank, ":", len(self.local_greens))
+
+
+            # Compute misfit
+            start_time = MPI.Wtime()
+            self.local_misfit_val = [misfit(data, self.local_greens.select(origin), np.array([self.sources[_i]])) for _i, origin in enumerate(self.origins)]
+            self.local_misfit_val = np.asarray(self.local_misfit_val).T[0]
+            end_time = MPI.Wtime()
+
+            if self.verbose_level >= 2:
+                print("local misfit is :", self.local_misfit_val) # - DEBUG PRINT
+
+            if self.rank == 0:
+                print("Misfit: " + str(end_time-start_time))
+            # Gather local misfit values
+            self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
+            # Broadcast the gathered values and concatenate to return across processes.
+            self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
+            self.misfit_val = np.asarray(np.concatenate(self.misfit_val))
+            return self.misfit_val
+
+    def _eval_fitness_greens(self, data, stations, misfit, db_or_greens_list):
+        """
+        Helper function to evaluate fitness for 'greens' mode.
+        """
+        # Check if latitude longitude AND depth are absent from the parameters list
+        if not any(x in self._parameters_names for x in ['depth', 'latitude', 'longitude']):
+            # If so, use the catalog origin, and make one copy per mutant to match the number of mutants.
+            if self.rank == 0 and self.verbose_level >= 1:
+                print('using catalog origin')
+            self.local_greens = db_or_greens_list
+
+            # Get cached arrays using misfit hash and run c_ext_L2.misfit using values from the cache
+            # For some reason, the results are not the same if we use the cache from iteration 0. 
+            # This is why the cache is create and used from iteration 1 onwards.
+            if hasattr(self, 'data_cache'):
+                if self.verbose_level >= 1:
+                    print("Using cached data")
+                hashkey = hash(misfit)
+                cache = self.data_cache.get(hashkey)
+                data_data = cache['data_data']
+                greens_data = cache['greens_data']
+                greens_greens = cache['greens_greens']
+                groups = cache['groups']
+                weights = cache['weights']
+                hybrid_norm = cache['hybrid_norm']
+                dt = cache['dt']
+                padding = cache['padding']
+                debug_level = 0
+                msg_args = [0, 0, 0]
+                self.local_misfit_val = c_ext_L2.misfit(data_data, greens_data, greens_greens, self.sources, groups, weights, hybrid_norm, dt, padding[0], padding[1], debug_level, *msg_args)
+            else:
+                if self.verbose_level >= 1:
+                    print("First iteration, calculating misfit using misfit object")
+                self.local_misfit_val = misfit(data, self.local_greens, self.sources)
+
+
+            self.local_misfit_val = np.asarray(self.local_misfit_val).T
+            if self.verbose_level >= 2:
+                print("local misfit is :", self.local_misfit_val)
+
+            # Gather local misfit values
+            self.misfit_val = self.comm.gather(self.local_misfit_val.T, root=0)
+            # Broadcast the gathered values and concatenate to return across processes.
+            self.misfit_val = self.comm.bcast(self.misfit_val, root=0)
+            self.misfit_val = np.asarray(np.concatenate(self.misfit_val)).T
+            return self.misfit_val.T
+        # If one of the three is present, issue a warning and break.
+        else:
+            if self.rank == 0:
+                print('WARNING: Greens mode is not compatible with latitude, longitude or depth parameters. Consider using a local Axisem database instead.')
+            return None
     
     # Where the mutants are gathered ... --------------------------------------------------------------
     def gather_mutants(self, verbose=False):
