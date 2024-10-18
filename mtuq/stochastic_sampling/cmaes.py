@@ -19,7 +19,7 @@ from mtuq.event import MomentTensor, Force, Origin
 from mtuq.graphics.uq._matplotlib import _hammer_projection, _generate_lune, _generate_sphere
 from mtuq.graphics import plot_combined, plot_misfit_force
 from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
-from mtuq.misfit import Misfit, PolarityMisfit
+from mtuq.misfit import Misfit, PolarityMisfit, WaveformMisfit
 from mtuq.misfit.waveform import c_ext_L2, calculate_norm_data 
 from mtuq.process_data import ProcessData
 import copy
@@ -976,7 +976,7 @@ class CMA_ES(object):
                 if mode == 'db':
                     misfit_values = self.eval_fitness(current_data, stations, current_misfit, db, process_list[j], wavelet, **kwargs)
                 elif mode == 'greens':
-                    if i == 1: 
+                    if i == 1 and type(current_misfit) == WaveformMisfit:
                         raw_greens_to_cache = copy.deepcopy(greens)
                         raw_data_to_cache = copy.deepcopy(current_data)
                         self._prep_and_cache_C_arrays(raw_data_to_cache, raw_greens_to_cache, current_misfit, stations)
