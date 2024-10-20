@@ -1,9 +1,29 @@
 import numpy as np
 
 def linear_transform(i, a, b):
-    """ Linear map suggested by N. Hansen for appropriate parameter scaling/variable encoding in CMA-ES
+    """ 
+    Linear map suggested by N. Hansen for appropriate parameter scaling/variable encoding in CMA-ES.
 
-    Linear map from [0;10] to [a,b]
+    Linear map from [0;10] to [a,b].
+
+    Parameters
+    ----------
+    i : float
+        The input value to be transformed.
+    a : float
+        The lower bound of the target range.
+    b : float
+        The upper bound of the target range.
+
+    Returns
+    -------
+    float
+        The transformed value.
+
+    Example
+    -------
+    >>> linear_transform(5, 0, 100)
+    50.0
 
     source:
     (https://cma-es.github.io/cmaes_sourcecode_page.html)
@@ -12,20 +32,55 @@ def linear_transform(i, a, b):
     return transformed
 
 def inverse_linear_transform(transformed, a, b):
-    """ Inverse linear mapping to reproject the variable in the [0; 10] range, from its original transformation bounds.
+    """ 
+    Inverse linear mapping to reproject the variable in the [0; 10] range, from its original transformation bounds.
 
+    Parameters
+    ----------
+    transformed : float
+        The transformed value to be inversely transformed.
+    a : float
+        The lower bound of the original range.
+    b : float
+        The upper bound of the original range.
+
+    Returns
+    -------
+    float
+        The inversely transformed value.
+
+    Example
+    -------
+    >>> inverse_linear_transform(50, 0, 100)
+    5.0
     """
     i = (10*(transformed-a))/(b-a)
     return i
 
 def logarithmic_transform(i, a, b):
-    """ Logarithmic mapping suggested  by N. Hansen. particularly adapted to define Magnitude ranges of [1e^(n),1e^(n+3)].
+    """ 
+    Logarithmic mapping suggested by N. Hansen. Particularly adapted to define Magnitude ranges of [1e^(n),1e^(n+3)].
 
     Logarithmic map from [0,10] to [a,b], with `a` and `b` typically spaced by 3 to 4 orders of magnitudes.
 
-    example usage:
-    x = np.arange(0,11)
-    projected_data = logarithmic_transform(x, 1e1, 1e4)
+    Parameters
+    ----------
+    i : float
+        The input value to be transformed.
+    a : float
+        The lower bound of the target range.
+    b : float
+        The upper bound of the target range.
+
+    Returns
+    -------
+    float
+        The transformed value.
+
+    Example
+    -------
+    >>> logarithmic_transform(5, 1e1, 1e4)
+    316.22776601683796
 
     source:
     (https://cma-es.github.io/cmaes_sourcecode_page.html)
@@ -35,15 +90,52 @@ def logarithmic_transform(i, a, b):
     return transformed
 
 def in_bounds(value, a=0, b=10):
+    """
+    Check if a value is within the specified bounds.
+
+    Parameters
+    ----------
+    value : float
+        The value to check.
+    a : float, optional
+        The lower bound (default is 0).
+    b : float, optional
+        The upper bound (default is 10).
+
+    Returns
+    -------
+    bool
+        True if the value is within bounds, False otherwise.
+
+    Example
+    -------
+    >>> in_bounds(5, 0, 10)
+    True
+    """
     return value >= a and value <= b
 
 def array_in_bounds(array, a=0, b=10):
     """
     Check if all elements of an array are in bounds.
-    :param array: The array to check.
-    :param a: The lower bound.
-    :param b: The upper bound.
-    :return: True if all elements of the array are in bounds, False otherwise.
+
+    Parameters
+    ----------
+    array : array-like
+        The array to check.
+    a : float, optional
+        The lower bound (default is 0).
+    b : float, optional
+        The upper bound (default is 10).
+
+    Returns
+    -------
+    bool
+        True if all elements of the array are in bounds, False otherwise.
+
+    Example
+    -------
+    >>> array_in_bounds([5, 6, 7], 0, 10)
+    True
     """
     for i in range(len(array)):
         if not in_bounds(array[i], a, b):
@@ -52,10 +144,51 @@ def array_in_bounds(array, a=0, b=10):
 
 class Repair:
     """
-    Repair class to define all the boundary handling constraint method implemented in R. Biedrzycki 2019, https://doi.org/10.1016/j.swevo.2019.100627.
+    Repair class to define all the boundary handling constraint methods implemented in R. Biedrzycki 2019, https://doi.org/10.1016/j.swevo.2019.100627.
 
-    These methods are invoqued whenever a CMA-ES mutant infringes a boundary.
+    These methods are invoked whenever a CMA-ES mutant infringes a boundary.
 
+    Parameters
+    ----------
+    method : str
+        The repair method to use.
+    data_array : array-like
+        The array of data to repair.
+    mean : float
+        The mean value of the distribution.
+    lower_bound : float, optional
+        The lower bound (default is 0).
+    upper_bound : float, optional
+        The upper bound (default is 10).
+
+    Methods
+    -------
+    reinitialize()
+        Redraw all out of bounds values from a uniform distribution [0,10].
+    projection()
+        Project all out of bounds values to the violated bounds.
+    reflection()
+        Reflect the infeasible coordinate value back from the boundary by the amount of constraint violation.
+    wrapping()
+        Shift the infeasible coordinate value by the feasible interval.
+    transformation()
+        Apply adaptive transformation based on 90%-tile.
+    rand_based()
+        Redraw the out of bound mutants between the base vector and the violated boundary.
+    midpoint_base()
+        Replace the infeasible coordinate value by the midpoint between its current position and the violated boundary.
+    midpoint_target()
+        Replace the infeasible coordinate value by the average of the target individual and the violated constraint.
+    conservative()
+        Replace the infeasible solution by the distribution mean.
+
+    Example
+    -------
+    >>> data = np.array([12, -3, 5, 8])
+    >>> repair = Repair('projection', data, mean=5)
+    >>> repair.projection()
+    >>> data
+    array([10,  0,  5,  8])
     """
     def __init__(self, method, data_array, mean, lower_bound=0, upper_bound=10):
         self.method = method
@@ -119,7 +252,7 @@ class Repair:
     def reflection(self):
         """
         The infeasible coordinate value of the solution is reflected back from the boundary by the amount of constraint violation.
-        This method may be call several times if the points are out of bound for more than the length of the [0,10] domain.
+        This method may be called several times if the points are out of bound for more than the length of the [0,10] domain.
         """
         self.data_array[self.l_oob] = 2*self.lower_bound - self.data_array[self.l_oob]
         self.data_array[self.u_oob] = 2*self.upper_bound - self.data_array[self.u_oob]
@@ -133,7 +266,7 @@ class Repair:
 
     def transformation(self):
         """
-        Adaptive transformation based on 90%-tile -
+        Adaptive transformation based on 90%-tile.
         Nonlinear transform defined by R. Biedrzycki 2019, https://doi.org/10.1016/j.swevo.2019.100627
         """
         al = np.min([(self.upper_bound - self.lower_bound)/2,(1+np.abs(self.lower_bound-2))/20])
@@ -155,20 +288,9 @@ class Repair:
         self.data_array[mask_4] = self.lower_bound + (self.data_array[mask_4] - (self.lower_bound-al))**2/(4*al)
         self.data_array[mask_5] = self.upper_bound - (self.data_array[mask_5] - (self.upper_bound-au))**2/(4*al)
 
-    # Removed due to being too impractical to implement in the current context.
-    # def projection_to_midpoint(self):
-    #     """
-    #     Project the particles onto the domain using the midpoint method (also reffered to as the Scaled Mutant)
-    #     Get the farthest out-of-bounds mutant
-    #     """
-    #     largest_outlier = self.data_array[np.argmax(np.sqrt((self.data_array-(self.lower_bound+self.upper_bound)/2)**2))]
-
-    #     alpha = np.abs(((self.lower_bound+self.upper_bound)/2)/(largest_outlier - (self.lower_bound+self.upper_bound)/2))
-    #     self.data_array[:] = ((1-alpha)*5 + alpha*self.data_array[:])
-
     def rand_based(self):
         """
-        Redraw the out of bound mutants between the base vector (the CMA_ES.xmean used in draw_muants()) and the violated boundary.
+        Redraw the out of bound mutants between the base vector (the CMA_ES.xmean used in draw_mutants()) and the violated boundary.
         The base vector is the mean of the population.
         """
         self.data_array[self.l_oob] = np.random.uniform(self.mean, self.lower_bound, len(self.data_array[self.l_oob]))
@@ -190,7 +312,6 @@ class Repair:
         
         # Ensure they are within bounds
         self.data_array[self.u_oob] = np.minimum(self.data_array[self.u_oob], self.upper_bound)
-
 
     def midpoint_target(self):
         """
