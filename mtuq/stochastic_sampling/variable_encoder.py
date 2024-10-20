@@ -42,6 +42,35 @@ class CMAESParameters:
     """
 
     def __init__(self, name, lower_bound, upper_bound, scaling = 'linear', initial=None, repair='rand_based', projection=None, **kwargs):
+        """
+        Initialize a CMAESParameters object.
+
+        Parameters
+        ----------
+        name : str
+            Name of the variable, used for printing and saving to file names etc.
+        lower_bound : float
+            Define the lower bound of the search space.
+        upper_bound : float
+            Define the upper bound of the search space.
+        scaling : str, optional
+            Define the scaling type to rescale the randomly drawn parameter in [0,10] to a value between self.lower_bound and self.upper_bound. Must be either 'linear' or 'log'. Default is 'linear'.
+        initial : float, optional
+            Initial guess for parameter values, used to seed CMA-ES optimization algorithm. Must be within the range [0,10]. If None, the value is initialized at random. Default is None.
+        repair : str, optional
+            Repair method used to redraw samples out of the [0,10] range. Default is 'rand_based'.
+        projection : method, optional
+            Custom projection function to the state variable. Default is None.
+        **kwargs : dict, optional
+            Additional keyword arguments.
+
+        Raises
+        ------
+        ValueError
+            If lower_bound is greater than upper_bound.
+            If scaling is not 'linear' or 'log'.
+            If initial value is outside of the expected bounds.
+        """
         self.name = name # Name of the parameter, used for printing and saving to file names etc...
         if lower_bound > upper_bound:
             raise ValueError('Lower bound is larger than the Upper Bound')

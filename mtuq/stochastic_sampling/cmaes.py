@@ -25,12 +25,183 @@ import copy
 
 
 class CMA_ES(object):
+    """
+    Covariance Matrix Adaptation Evolution Strategy (CMA-ES) class for moment tensor and force inversion.
+
+    This class implements the CMA-ES algorithm for seismic inversion. It accepts a list of `CMAESParameters` objects containing the options and tuning of each of the inverted parameters. The inversion is carried out automatically based on the content of the `CMAESParameters` list.
+
+    Attributes
+    ----------
+    rank : int
+        The rank of the current MPI process.
+    size : int
+        The total number of MPI processes.
+    comm : MPI.Comm
+        The MPI communicator.
+    event_id : str
+        The event ID for the inversion.
+    verbose_level : int
+        The verbosity level for logging.
+    _parameters : list
+        A list of `CMAESParameters` objects.
+    _parameters_names : list
+        A list of parameter names.
+    n : int
+        The number of parameters.
+    lmbda : int
+        The number of mutants to be generated.
+    catalog_origin : Origin
+        The origin of the event to be inverted.
+    callback : function
+        The callback function used for the inversion.
+    xmean : numpy.ndarray
+        The mean of the parameter distribution.
+    sigma : float
+        The step size for the CMA-ES algorithm.
+    iteration : int
+        The current iteration number.
+    counteval : int
+        The number of function evaluations.
+    _greens_tensors_cache : dict
+        A cache for Green's tensors.
+    mu : int
+        The number of top-performing mutants used for recombination.
+    weights : numpy.ndarray
+        The weights for recombination.
+    mueff : float
+        The effective number of top-performing mutants.
+    cs : float
+        The learning rate for step-size control.
+    damps : float
+        The damping parameter for step-size control.
+    cc : float
+        The learning rate for covariance matrix adaptation.
+    acov : float
+        The covariance matrix adaptation parameter.
+    c1 : float
+        The learning rate for rank-one update of the covariance matrix.
+    cmu : float
+        The learning rate for rank-mu update of the covariance matrix.
+    ps : numpy.ndarray
+        The evolution path for step-size control.
+    pc : numpy.ndarray
+        The evolution path for covariance matrix adaptation.
+    B : numpy.ndarray
+        The matrix of eigenvectors of the covariance matrix.
+    D : numpy.ndarray
+        The matrix of eigenvalues of the covariance matrix.
+    C : numpy.ndarray
+        The covariance matrix.
+    invsqrtC : numpy.ndarray
+        The inverse square root of the covariance matrix.
+    eigeneval : int
+        The number of eigenvalue evaluations.
+    chin : float
+        The expected length of the evolution path.
+    mutants : numpy.ndarray
+        The array of mutants.
+    cache_size : int
+        The number of iterations to cache.
+    cache_counter : int
+        The counter for cached iterations.
+    mutants_cache : numpy.ndarray
+        The cache for mutants.
+    mutants_logger_list : pandas.DataFrame
+        The logger for mutants.
+    mean_logger_list : pandas.DataFrame
+        The logger for the mean solution.
+    _misfit_holder : numpy.ndarray
+        The holder for misfit values.
+    fig : matplotlib.figure.Figure
+        The figure object for plotting.
+    ax : matplotlib.axes.Axes
+        The axis object for plotting.
+
+    Methods
+    -------
+    __init__(self, parameters_list, origin, lmbda=None, callback_function=None, event_id='', verbose_level=0)
+        Initializes the CMA-ES class with the given parameters.
+    _initialize_mpi_communicator(self)
+        Initializes the MPI communicator and sets the process rank and size.
+    _initialize_logging(self, event_id, verbose_level)
+        Sets up logging properties like event_id and verbosity level.
+    _initialize_parameters(self, parameters_list, lmbda, origin, callback_function)
+        Initializes the parameters for the CMA-ES algorithm.
+    _set_default_callback(self)
+        Sets the default callback function based on the parameter names.
+    _setup_caches(self)
+        Initializes caches and logging variables for performance tracking.
+    draw_mutants(self)
+        Draws mutants from a Gaussian distribution and scatters them across MPI processes.
+    _generate_mutants(self)
+        Generates all `self.lmbda` mutants from a Gaussian distribution.
+    _draw_single_mutant(self)
+        Draws a single mutant from the Gaussian distribution.
+    _repair_and_redraw_mutants(self)
+        Applies repair methods and redraws to all mutants, parameter by parameter.
+    _redraw_param_until_valid(self, param_values, bounds)
+        Redraws the out-of-bounds values of a parameter array until they are within bounds.
+    _apply_repair_to_param(self, param_values, bounds, param_idx)
+        Applies a repair method to the full array of parameter values if defined.
+    _scatter_mutants(self)
+        Splits and scatters the mutants across processes.
+    _receive_mutants(self)
+        Receives scattered mutants on non-root processes.
+    eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False)
+        Evaluates the misfit for each mutant of the population.
+    _eval_fitness_db(self, data, stations, misfit, db_or_greens_list, process, wavelet)
+        Helper function to evaluate fitness for 'db' mode.
+    _eval_fitness_greens(self, data, stations, misfit, db_or_greens_list)
+        Helper function to evaluate fitness for 'greens' mode.
+    gather_mutants(self, verbose=False)
+        Gathers mutants from all processes into the root process.
+    fitness_sort(self, misfit)
+        Sorts the mutants by fitness and updates the misfit_holder.
+    update_step_size(self)
+        Updates the step size for the CMA-ES algorithm.
+    update_covariance(self)
+        Updates the covariance matrix for the CMA-ES algorithm.
+    update_mean(self)
+        Updates the mean of the parameter distribution.
+    circular_mean(self, id)
+        Computes the circular mean for a given parameter.
+    smallestAngle(self, targetAngles, currentAngles)
+        Calculates the smallest angle (in degrees) between two given sets of angles.
+    mean_diff(self, new, old)
+        Computes the mean change and applies circular difference for wrapped repair methods.
+    create_origins(self)
+        Creates a list of origins for each mutant.
+    return_candidate_solution(self, id=None)
+        Returns the candidate solution for a given mutant.
+    _datalogger(self, mean=False)
+        Logs the coordinates and misfit values of the mutants.
+    _prep_and_cache_C_arrays(self, data, greens, misfit, stations)
+        Prepares and caches C compatible arrays for the misfit function evaluation.
+    Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, **kwargs)
+        Solves for the best-fitting source model using the CMA-ES algorithm.
+    plot_mean_waveforms(self, data_list, process_list, misfit_list, stations, db_or_greens_list)
+        Plots the mean waveforms using the base mtuq waveform plots.
+    _scatter_plot(self)
+        Generates a scatter plot of the mutants and the current mean solution.
+    _transform_mutants(self)
+        Transforms local mutants on each process based on the parameters scaling and projection settings.
+    _generate_sources(self)
+        Generates sources by calling the callback function on transformed data according to the set mode.
+    _get_greens_tensors_key(self, process)
+        Gets the body-wave or surface-wave key for the GreensTensors object from the ProcessData object.
+    _check_greens_input_combination(self, db, process, wavelet)
+        Checks the validity of the given parameters.
+    _check_Solve_inputs(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, **kwargs)
+        Checks the validity of input arguments for the Solve method.
+    _get_data_norm(self, data, misfit)
+        Computes the norm of the data using the calculate_norm_data function.
+    """
 
     def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
         '''
         parallel_CMA_ES class
 
-        CMA-ES class for moment tensor and force inversion. The class accept a list of `CMAESParameters` objects containing the options and tunning of each of the inverted parameters. CMA-ES will be carried automatically based of the content of the `CMAESParameters` list.
+        CMA-ES class for moment tensor and force inversion. The class accept a list of `CMAESParameters` objects containing the options and tunning of each of the inverted parameters.
 
         .. rubric :: Usage
 

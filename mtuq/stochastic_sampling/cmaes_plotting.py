@@ -17,24 +17,37 @@ def plot_mean_waveforms(data_list, process_list, misfit_list, stations, db_or_gr
     If green's functions a provided directly, they are used as is. Otherwise, extrace green's function from Axisem database and preprocess them.
     Support only 1 or 2 waveform groups (body and surface waves, or surface waves only)
 
-    Arguments
+    Parameters
     ----------
-        data_list: A list of data to be plotted (typically `data_bw` and `data_sw`).
-        process_list: A list of processes for each data (typically `process_bw` and `process_sw`).
-        misfit_list: A list of misfits for each data (typically `misfit_bw` and `misfit_sw`).
-        stations: A list of stations.
-        db_or_greens_list: Either an AxiSEM_Client instance or a list of GreensTensors (typically `greens_bw` and `greens_sw`).
-        mean_solution: The mean solution to be plotted.
-        final_origin: The final origin to be plotted.
-        mode: The mode of the inversion ('mt', 'mt_dev', 'mt_dc', or 'force').
-        callback: The callback function used for the inversion.
-        event_id: The event ID for the inversion.
-        iteration: The current iteration of the inversion.
-        rank: The rank of the current process.
+    data_list : list
+        A list of data to be plotted (typically `data_bw` and `data_sw`).
+    process_list : list
+        A list of processes for each data (typically `process_bw` and `process_sw`).
+    misfit_list : list
+        A list of misfits for each data (typically `misfit_bw` and `misfit_sw`).
+    stations : list
+        A list of stations.
+    db_or_greens_list : list
+        Either an AxiSEM_Client instance or a list of GreensTensors (typically `greens_bw` and `greens_sw`).
+    mean_solution : numpy.ndarray
+        The mean solution to be plotted.
+    final_origin : list
+        The final origin to be plotted.
+    mode : str
+        The mode of the inversion ('mt', 'mt_dev', 'mt_dc', or 'force').
+    callback : function
+        The callback function used for the inversion.
+    event_id : str
+        The event ID for the inversion.
+    iteration : int
+        The current iteration of the inversion.
+    rank : int
+        The rank of the current process.
 
     Raises
-    ----------
-        ValueError: If the mode is not 'mt', 'mt_dev', 'mt_dc', or 'force'.
+    ------
+    ValueError
+        If the mode is not 'mt', 'mt_dev', 'mt_dc', or 'force'.
     """
 
     if rank != 0:
@@ -111,17 +124,25 @@ def _scatter_plot(mutants_logger_list, mode, fig, ax, rank, _datalogger):
     """
     Generates a scatter plot of the mutants and the current mean solution
     
-    Arguments
+    Parameters
     ----------
-        mutants_logger_list: The list of mutants to be plotted.
-        mode: The mode of the inversion ('mt', 'mt_dev', 'mt_dc', or 'force').
-        fig: The figure object for the plot.
-        ax: The axis object for the plot.
-        rank: The rank of the current process.
-        _datalogger: The datalogger function used for the inversion.
+    mutants_logger_list : pandas.DataFrame
+        The list of mutants to be plotted.
+    mode : str
+        The mode of the inversion ('mt', 'mt_dev', 'mt_dc', or 'force').
+    fig : matplotlib.figure.Figure
+        The figure object for the plot.
+    ax : matplotlib.axes.Axes
+        The axis object for the plot.
+    rank : int
+        The rank of the current process.
+    _datalogger : function
+        The datalogger function used for the inversion.
 
-    Return: 
-    Matplotlib figure object (also retrived by self.fig)
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object for the plot.
     """
     if rank == 0:
         # Check if mode is mt, mt_dev or mt_dc or force
