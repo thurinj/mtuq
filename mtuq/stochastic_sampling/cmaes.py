@@ -118,7 +118,7 @@ class CMA_ES(object):
     ax : matplotlib.axes.Axes
         The axis object for plotting.
     best_solutions : list
-        The list of best solutions from each run.
+        The list to store the best solutions from each run.
 
     Methods
     -------
@@ -195,7 +195,7 @@ class CMA_ES(object):
     _get_data_norm(self, data, misfit)
         Computes the norm of the data using the calculate_norm_data function.
     restart(self)
-        Handles the restart logic for the CMA-ES algorithm.
+        Handles the restart logic by increasing the population size and resetting necessary parameters.
 
     """
 
@@ -1210,12 +1210,34 @@ class CMA_ES(object):
                         result = self.mutants_logger_list
                         plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
 
-            # Check for convergence and trigger the restart if needed
-            if self.rank == 0 and self.iteration > 0 and self.iteration % 20 == 0:
-                if np.abs(self._misfit_holder[0] - self._misfit_holder[-1]) < 1e-3:
-                    print('Convergence criterion met. Restarting with increased population size.')
+            # Check for convergence and trigger restart if needed
+            if self.rank == 0 and self.iteration > 0 and self.iteration % plot_interval == 0:
+                best_solution = self.return_candidate_solution()
+                self.best_solutions.append(best_solution)
+                if self.iteration >= max_iter:
                     self.restart()
-                    iter_count = 0  # Reset iteration count after restart
+
+    def restart(self):
+        """
+        Handles the restart logic by increasing the population size and resetting necessary parameters.
+        """
+        if self.rank == 0:
+            print('Restarting CMA-ES with increased population size...')
+        self.lmbda += 10  # Increase population size by 10
+        self.mu = np.floor(self.lmbda / 2)
+        self.weights = np.array([np.log(self.mu + 1) - np.log(np.arange(1, self.mu + 1))]).T
+        self.weights /= sum(self.weights)
+        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+        self.ps = np.zeros_like(self.xmean)
+        self.pc = np.zeros_like(self.xmean)
+        self.B = np.eye(self.n, self.n)
+        self.D = np.ones((self.n, 1))
+        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
+        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
+        self.eigeneval = 0
+        self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
+        self.mutants = np.zeros((self.n, self.lmbda))
+        self.counteval = 0
 
     def _transform_mutants(self):
         """
@@ -1429,31 +1451,3 @@ class CMA_ES(object):
                 components = list(''.join(misfit.time_shift_groups))
             
             return calculate_norm_data(data, misfit.norm, components)
-
-    def restart(self):
-        """
-        Handles the restart logic for the CMA-ES algorithm.
-
-        This method increases the population size (lmbda) and resets the necessary parameters for a new run.
-        """
-        self.lmbda += 10  # Increase the population size
-        self.mu = np.floor(self.lmbda / 2)
-        self.weights = np.array([np.log(self.mu + 1) - np.log(np.arange(1, self.mu + 1))]).T
-        self.weights /= sum(self.weights)
-        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
-        self.ps = np.zeros_like(self.xmean)
-        self.pc = np.zeros_like(self.xmean)
-        self.B = np.eye(self.n, self.n)
-        self.D = np.ones((self.n, 1))
-        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
-        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
-        self.eigeneval = 0
-        self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
-        self.iteration = 0
-        self.counteval = 0
-
-        # Save the best solution from the previous run
-        self.best_solutions.append(self.return_candidate_solution()[0])
-
-        if self.rank == 0:
-            print(f'Restarting with increased population size: {self.lmbda}')
