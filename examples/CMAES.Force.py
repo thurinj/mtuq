@@ -13,6 +13,7 @@ from mtuq.stochastic_sampling import initialize_force
 from mtuq.stochastic_sampling.cmaes import CMA_ES
 from mtuq.graphics import plot_misfit_force
 from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
+from mtuq.stochastic_sampling.cmaes_plotting import _cmaes_scatter_plot
 
 
 
@@ -51,7 +52,7 @@ if __name__=='__main__':
 
     path_data=    fullpath('data/examples/20210809074550/*[ZRT].sac')
     path_weights= fullpath('data/examples/20210809074550/weights.dat')
-    event_id=     '20090407201255351'
+    event_id=     '20210809074550'
     model=        'ak135'
     mode =        'greens' # 'database' or 'greens'
 
@@ -222,7 +223,7 @@ if __name__=='__main__':
         result = CMA.mutants_logger_list # -- This is the list of mutants (i.e. the population) at each iteration
         # This is a mtuq.grid_search.MTUQDataFrame object, which is the same as when conducting a random grid-search
         # It is therefore compatible with the "regular" plotting functions in mtuq.graphics 
-        fig = CMA._scatter_plot() # -- This is a scatter plot of the mutants at the last iteration
+        fig = _cmaes_scatter_plot(CMA) # -- This is a scatter plot of the mutants at the last iteration
         fig.savefig(event_id+'CMA-ES_final_step.png')
 
     if comm.rank==0:
