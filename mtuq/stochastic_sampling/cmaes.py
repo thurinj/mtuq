@@ -119,7 +119,7 @@ class CMA_ES(object):
         The axis object for plotting.
     restart : bool
         Flag to indicate if the restart strategy is enabled.
-    combined_run_plotting : list
+    restart_holder : list
         Holder for combined run plotting.
 
     Methods
@@ -322,9 +322,9 @@ class CMA_ES(object):
         self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
         self.mutants = np.zeros((self.n, self.lmbda))
 
-        # Initialize restart attributes
+        # Initialize restart parameters
         self.restart = restart
-        self.combined_run_plotting = []
+        self.restart_holder = []
 
     def _set_default_callback(self):
         """Sets the default callback function based on the parameter names."""
@@ -692,7 +692,7 @@ class CMA_ES(object):
         if self.rank == 0:
             self.mutants = np.concatenate(self.mutants, axis=1)
             if self.verbose_level >= 2:
-                print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', type(self.mutants))  # DEBUG PRINT
+                print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', np.array(self.mutants).dtype)  # DEBUG PRINT
         else:
             self.mutants = None
 
@@ -1215,6 +1215,34 @@ class CMA_ES(object):
                         print('Plotting results for iteration %d\n' % (i + iter_count))
                         result = self.mutants_logger_list
                         plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
+
+            # Restart logic
+            if self.restart and (i == max_iter - 1):
+                if self.rank == 0:
+                    print('Restarting CMA-ES with increased population size\n')
+                self.lmbda *= 2
+                self.mu = np.floor(self.lmbda / 2)
+                self.weights = np.array([np.log(self.mu + a) - np.log(np.arange(1, self.mu + 1))]).T
+                self.weights /= sum(self.weights)
+                self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+                self.restart_holder.append(self.mutants_logger_list)
+                self.mutants_logger_list = pd.DataFrame()
+                self.mean_logger_list = pd.DataFrame()
+                self.iteration = 0
+                self.counteval = 0
+                self.sigma = 0.5
+                self.ps = np.zeros_like(self.xmean)
+                self.pc = np.zeros_like(self.xmean)
+                self.B = np.eye(self.n, self.n)
+                self.D = np.ones((self.n, 1))
+                self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
+                self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
+                self.eigeneval = 0
+                self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
+                self.mutants = np.zeros((self.n, self.lmbda))
+                self._misfit_holder = np.zeros((int(self.lmbda), 1))
+                self.fig = None
+                self.ax = None
 
 
     def _transform_mutants(self):
