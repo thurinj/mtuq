@@ -16,6 +16,7 @@ from mtuq.util.math import to_gamma, to_delta
 from mtuq.graphics.uq.lune import plot_misfit_lune
 from mtuq.graphics.uq._matplotlib import _plot_lune_matplotlib
 from mtuq.graphics import plot_combined
+from mtuq.stochastic_sampling.cmaes_plotting import _cmaes_scatter_plot
 
 def plot_lune(CMA, p):
     ''' Temporary function to plot the lune distribution of mutants. This
@@ -269,7 +270,7 @@ if __name__=='__main__':
         result = CMA.mutants_logger_list # -- This is the list of mutants (i.e. the population) at each iteration
         # This is a mtuq.grid_search.MTUQDataFrame object, which is the same as when conducting a random grid-search
         # It is therefore compatible with the "regular" plotting functions in mtuq.graphics 
-        fig = CMA._scatter_plot() # -- This is a scatter plot of the mutants at the last iteration
+        fig = _cmaes_scatter_plot(CMA) # -- This is a scatter plot of the mutants at the last iteration
         fig.savefig(event_id+'CMA-ES_final_step.png')
 
     if comm.rank==0:
