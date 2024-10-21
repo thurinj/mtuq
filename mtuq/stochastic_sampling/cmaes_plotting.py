@@ -1,7 +1,7 @@
 import numpy as np
 from mtuq.graphics import plot_data_greens2, plot_data_greens1
 from mtuq.graphics.uq._matplotlib import _hammer_projection, _generate_lune, _generate_sphere
-from mtuq.util.math import wrap_180
+from mtuq.util.math import wrap_180, to_gamma, to_delta
 from mtuq.event import MomentTensor, Force
 from mtuq.grid.moment_tensor import UnstructuredGrid
 from mtuq.grid.force import UnstructuredGrid
@@ -120,24 +120,14 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
                             data[0], greens[0], process[0], misfit[0], stations, final_origin, best_source, lune_dict)
 
 
-def _scatter_plot(CMA, mutants_logger_list, mode, fig, ax, rank, _datalogger):
+def _cmaes_scatter_plot(CMA):
     """
     Generates a scatter plot of the mutants and the current mean solution
     
     Parameters
     ----------
-    mutants_logger_list : pandas.DataFrame
-        The list of mutants to be plotted.
-    mode : str
-        The mode of the inversion ('mt', 'mt_dev', 'mt_dc', or 'force').
-    fig : matplotlib.figure.Figure
-        The figure object for the plot.
-    ax : matplotlib.axes.Axes
-        The axis object for the plot.
-    rank : int
-        The rank of the current process.
-    _datalogger : function
-        The datalogger function used for the inversion.
+    CMA : CMA_ES    
+        The CMA_ES object containing the necessary information for plotting.
 
     Returns
     -------
