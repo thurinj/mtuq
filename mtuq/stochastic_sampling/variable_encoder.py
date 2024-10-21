@@ -38,10 +38,13 @@ class CMAESParameters:
     ``projection`` (`method`): Assign a custom projection function to the state variable. The main use is to convert moment magnitude Mw to rho as in Tape and Tape 2015 uniform moment tensor parameterization.
         -``'mtuq.util.math.to_rho()'``
 
+    ``restart`` (`bool`): Enable or disable the restart strategy for the parameter. Default is False.
+
+    ``restart_increment`` (`int`): Increment value for the population size during restarts. Default is 10.
 
     """
 
-    def __init__(self, name, lower_bound, upper_bound, scaling = 'linear', initial=None, repair='rand_based', projection=None, **kwargs):
+    def __init__(self, name, lower_bound, upper_bound, scaling = 'linear', initial=None, repair='rand_based', projection=None, restart=False, restart_increment=10, **kwargs):
         """
         Initialize a CMAESParameters object.
 
@@ -61,6 +64,10 @@ class CMAESParameters:
             Repair method used to redraw samples out of the [0,10] range. Default is 'rand_based'.
         projection : method, optional
             Custom projection function to the state variable. Default is None.
+        restart : bool, optional
+            Enable or disable the restart strategy for the parameter. Default is False.
+        restart_increment : int, optional
+            Increment value for the population size during restarts. Default is 10.
         **kwargs : dict, optional
             Additional keyword arguments.
 
@@ -90,6 +97,8 @@ class CMAESParameters:
             self.initial = initial # Initial guess for parameter values, used to seed CMA-ES optimisation algorithm
         self.repair = repair # Repair method used to redraw samples out of the [0,10] range.
         self.projection = projection
+        self.restart = restart # Enable or disable the restart strategy for the parameter.
+        self.restart_increment = restart_increment # Increment value for the population size during restarts.
 
         if 'grid' in kwargs:
             self.grid = kwargs['grid'] # Grid of parameter values to use a non continuous optimization purposes. must be an array with initial and final value consistent with predefined lower_bound and upper_bound.

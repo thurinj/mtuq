@@ -276,6 +276,19 @@ if __name__=='__main__':
     if comm.rank==0:
         print('\nFinished\n')
 
+    # Example to demonstrate the restart functionality
+    if comm.rank==0:
+        print('Demonstrating the restart functionality...\n')
+        parameter_list = initialize_mt(Mw_range=[4,6], src_type=src_type)
+        CMA = CMA_ES(parameter_list, origin=origin, lmbda=popsize, event_id=event_id)
+        CMA.sigma = 5.0
+        iter = 60
+        if mode == 'database':
+            CMA.Solve(DATA, stations, MISFIT, PROCESS, db, iter, wavelet, plot_interval=10, misfit_weights=[2., 3.])
+        elif mode == 'greens':
+            CMA.Solve(DATA, stations, MISFIT, PROCESS, GREENS, iter, plot_interval=10, misfit_weights=[2., 3.])
+        print('Restart functionality demonstration completed.\n')
+
     # ================================================================================================
     # FOR EDUCATIONAL PURPOSE -- This is what is happening under the hood in the Solve function
     # ================================================================================================
