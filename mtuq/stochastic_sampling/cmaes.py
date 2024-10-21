@@ -1465,6 +1465,13 @@ class CMA_ES(object):
             # Check if the standard deviation of the population is below a threshold
             if np.std(self.mutants) < 1e-6:
                 return True
+
+            # Check if the rate of change of the misfit function is below a threshold
+            if self.iteration > 1:
+                misfit_change_rate = np.abs(self._misfit_holder[-1] - self._misfit_holder[-2]) / self._misfit_holder[-2]
+                if misfit_change_rate < 1e-3:
+                    return True
+
         return False
 
     def reset_parameters(self):

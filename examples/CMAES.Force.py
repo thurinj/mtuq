@@ -63,7 +63,7 @@ if __name__=='__main__':
     process_bw = ProcessData(
         filter_type='Bandpass',
         freq_min= 0.1,
-        freq_max= 0.333,
+        freq_max=0.333,
         pick_type='taup',
         taup_model=model,
         window_type='body_wave',
@@ -209,7 +209,7 @@ if __name__=='__main__':
     GREENS = [greens_sw] if mode == 'greens' else None  # add more as needed
 
     popsize = 48 # -- CMA-ES population size (you can play with this value)
-    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id)
+    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id, max_restarts=5)
     CMA.sigma = 3 # -- CMA-ES step size, defined as the standard deviation of the population can be ajusted here (3 ~ 4 seems to provide a balanced exploration/exploitation and avoid getting stuck in local minima). 
     # The default value is otherwise 1 standard deviation (you can play with this value)
     iter = 80 # -- Number of iterations (you can play with this value)
