@@ -172,6 +172,21 @@ def _cmaes_scatter_plot(CMA):
 
             CMA.ax.scatter(v, w, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100)
 
+            # Plot the mean solutions for all steps and restarts
+            mean_logger_list = CMA.mean_logger_list
+            if 'v' in mean_logger_list:
+                mean_v = np.asarray(mean_logger_list['v'])
+            else:
+                mean_v = np.zeros_like(mean_logger_list['misfit'])
+
+            if 'w' in mean_logger_list:
+                mean_w = np.asarray(mean_logger_list['w'])
+            else:
+                mean_w = np.zeros_like(mean_logger_list['misfit'])
+
+            mean_v, mean_w = _hammer_projection(to_gamma(mean_v), to_delta(mean_w))
+            CMA.ax.plot(mean_v, mean_w, 'r-', zorder=10000000)
+
             CMA.fig.canvas.draw()
             return CMA.fig
 
@@ -198,4 +213,13 @@ def _cmaes_scatter_plot(CMA):
 
             CMA.ax.scatter(longitude, latitude, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100)
             CMA.ax.scatter(LONGITUDE, LATITUDE, c='red', marker='x', zorder=10000000)
+
+            # Plot the mean solutions for all steps and restarts
+            mean_logger_list = CMA.mean_logger_list
+            mean_phi, mean_h = np.asarray(mean_logger_list['phi']), np.asarray(mean_logger_list['h'])
+            mean_latitude = np.degrees(np.pi / 2 - np.arccos(mean_h))
+            mean_longitude = wrap_180(mean_phi + 90)
+            mean_longitude, mean_latitude = _hammer_projection(mean_longitude, mean_latitude)
+            CMA.ax.plot(mean_longitude, mean_latitude, 'r-', zorder=10000000)
+
             return CMA.fig

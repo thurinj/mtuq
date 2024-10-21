@@ -117,6 +117,10 @@ class CMA_ES(object):
         The figure object for plotting.
     ax : matplotlib.axes.Axes
         The axis object for plotting.
+    restart_count : int
+        The number of restarts performed.
+    max_restarts : int
+        The maximum number of restarts allowed.
 
     Methods
     -------
@@ -192,9 +196,15 @@ class CMA_ES(object):
         Checks the validity of input arguments for the Solve method.
     _get_data_norm(self, data, misfit)
         Computes the norm of the data using the calculate_norm_data function.
+    _restart_strategy(self)
+        Implements the IPOP restart strategy.
+    check_convergence(self)
+        Checks for convergence and triggers a restart if necessary.
+    reset_parameters(self)
+        Resets the parameters for a restart.
     """
 
-    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
+    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0, max_restarts: int = 5):
         """
         Initializes the CMA-ES class with the given parameters.
 
@@ -212,6 +222,8 @@ class CMA_ES(object):
             The event ID for the inversion.
         verbose_level : int, optional
             The verbosity level for logging.
+        max_restarts : int, optional
+            The maximum number of restarts allowed. Default is 5.
         """
 
         # Initialize basic properties
@@ -221,6 +233,10 @@ class CMA_ES(object):
         
         # Set up caches and storage for logging
         self._setup_caches()
+
+        # Initialize restart parameters
+        self.restart_count = 0
+        self.max_restarts = max_restarts
 
     def _initialize_mpi_communicator(self):
         """Initializes the MPI communicator and sets the process rank and size."""
@@ -1202,6 +1218,14 @@ class CMA_ES(object):
                         result = self.mutants_logger_list
                         plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
 
+            # Check for convergence and trigger a restart if necessary
+            if self.check_convergence():
+                if self.restart_count < self.max_restarts:
+                    self._restart_strategy()
+                    self.reset_parameters()
+                    self.restart_count += 1
+                else:
+                    break
 
     def _transform_mutants(self):
         """
@@ -1415,3 +1439,48 @@ class CMA_ES(object):
                 components = list(''.join(misfit.time_shift_groups))
             
             return calculate_norm_data(data, misfit.norm, components)
+
+    def _restart_strategy(self):
+        """
+        Implements the IPOP restart strategy.
+
+        This method doubles the population size (lambda) each time it is called.
+        """
+        self.lmbda *= 2
+        self.mu = np.floor(self.lmbda / 2)
+        self.weights = np.array([np.log(self.mu + 1) - np.log(np.arange(1, self.mu + 1))]).T
+        self.weights /= sum(self.weights)
+        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+
+    def check_convergence(self):
+        """
+        Checks for convergence and triggers a restart if necessary.
+
+        Returns
+        -------
+        bool
+            True if convergence criteria are met, False otherwise.
+        """
+        if self.rank == 0:
+            # Check if the standard deviation of the population is below a threshold
+            if np.std(self.mutants) < 1e-6:
+                return True
+        return False
+
+    def reset_parameters(self):
+        """
+        Resets the parameters for a restart.
+
+        This method resets the mean, step size, and covariance matrix to their initial values.
+        """
+        self.xmean = np.asarray([[param.initial for param in self._parameters]]).T
+        self.sigma = 0.5
+        self.ps = np.zeros_like(self.xmean)
+        self.pc = np.zeros_like(self.xmean)
+        self.B = np.eye(self.n, self.n)
+        self.D = np.ones((self.n, 1))
+        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
+        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
+        self.eigeneval = 0
+        self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
+        self.mutants = np.zeros((self.n, self.lmbda))
