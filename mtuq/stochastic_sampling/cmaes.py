@@ -117,18 +117,20 @@ class CMA_ES(object):
         The figure object for plotting.
     ax : matplotlib.axes.Axes
         The axis object for plotting.
-    best_solutions : list
-        The list to store the best solutions from each run.
+    restart : bool
+        Flag to indicate if the restart strategy is enabled.
+    combined_run_plotting : list
+        Holder for combined run plotting.
 
     Methods
     -------
-    __init__(self, parameters_list, origin, lmbda=None, callback_function=None, event_id='', verbose_level=0)
+    __init__(self, parameters_list, origin, lmbda=None, callback_function=None, event_id='', verbose_level=0, restart=False)
         Initializes the CMA-ES class with the given parameters.
     _initialize_mpi_communicator(self)
         Initializes the MPI communicator and sets the process rank and size.
     _initialize_logging(self, event_id, verbose_level)
         Sets up logging properties like event_id and verbosity level.
-    _initialize_parameters(self, parameters_list, lmbda, origin, callback_function)
+    _initialize_parameters(self, parameters_list, lmbda, origin, callback_function, restart)
         Initializes the parameters for the CMA-ES algorithm.
     _set_default_callback(self)
         Sets the default callback function based on the parameter names.
@@ -180,7 +182,7 @@ class CMA_ES(object):
         Logs the coordinates and misfit values of the mutants.
     _prep_and_cache_C_arrays(self, data, greens, misfit, stations)
         Prepares and caches C compatible arrays for the misfit function evaluation.
-    Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, **kwargs)
+    Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, restart=False, **kwargs)
         Solves for the best-fitting source model using the CMA-ES algorithm.
     _transform_mutants(self)
         Transforms local mutants on each process based on the parameters scaling and projection settings.
@@ -194,12 +196,9 @@ class CMA_ES(object):
         Checks the validity of input arguments for the Solve method.
     _get_data_norm(self, data, misfit)
         Computes the norm of the data using the calculate_norm_data function.
-    restart(self)
-        Handles the restart logic by increasing the population size and resetting necessary parameters.
-
     """
 
-    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
+    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0, restart: bool = False):
         """
         Initializes the CMA-ES class with the given parameters.
 
@@ -217,18 +216,17 @@ class CMA_ES(object):
             The event ID for the inversion.
         verbose_level : int, optional
             The verbosity level for logging.
+        restart : bool, optional
+            Flag to indicate if the restart strategy is enabled.
         """
 
         # Initialize basic properties
         self._initialize_mpi_communicator()
         self._initialize_logging(event_id, verbose_level)
-        self._initialize_parameters(parameters_list, lmbda, origin, callback_function)
+        self._initialize_parameters(parameters_list, lmbda, origin, callback_function, restart)
         
         # Set up caches and storage for logging
         self._setup_caches()
-
-        # Initialize the list to store the best solutions from each run
-        self.best_solutions = []
 
     def _initialize_mpi_communicator(self):
         """Initializes the MPI communicator and sets the process rank and size."""
@@ -245,7 +243,7 @@ class CMA_ES(object):
         if self.rank == 0:
             print(f'Initializing CMA-ES inversion for event {self.event_id}')
 
-    def _initialize_parameters(self, parameters_list, lmbda, origin, callback_function):
+    def _initialize_parameters(self, parameters_list, lmbda, origin, callback_function, restart):
         """
         Initializes the parameters for the CMA-ES algorithm, including population size, callback function,
         and variables related to step-size control and covariance matrix adaptation.
@@ -260,6 +258,8 @@ class CMA_ES(object):
             The origin of the event to be inverted.
         callback_function : function, optional
             The callback function used for the inversion.
+        restart : bool, optional
+            Flag to indicate if the restart strategy is enabled.
         """
         self._parameters = parameters_list
         self._parameters_names = [parameter.name for parameter in parameters_list]
@@ -321,6 +321,10 @@ class CMA_ES(object):
         self.eigeneval = 0
         self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
         self.mutants = np.zeros((self.n, self.lmbda))
+
+        # Initialize restart attributes
+        self.restart = restart
+        self.combined_run_plotting = []
 
     def _set_default_callback(self):
         """Sets the default callback function based on the parameter names."""
@@ -1091,7 +1095,7 @@ class CMA_ES(object):
                 print('Data arrays already cached. Nothing to do here.')
             pass
 
-    def Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, **kwargs):
+    def Solve(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter=100, wavelet=None, plot_interval=10, iter_count=0, misfit_weights=None, restart=False, **kwargs):
         """
         Solves for the best-fitting source model using the CMA-ES algorithm. This is the master method used in inversions. 
 
@@ -1121,6 +1125,8 @@ class CMA_ES(object):
             Type of source model, one of ['full', 'deviatoric', 'dc']. Default is full.
         misfit_weights : list, optional
             List of misfit weights. Default is None for equal weights.
+        restart : bool, optional
+            Flag to indicate if the restart strategy is enabled.
         **kwargs
             Additional keyword arguments passed to eval_fitness method.
 
@@ -1210,34 +1216,6 @@ class CMA_ES(object):
                         result = self.mutants_logger_list
                         plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
 
-            # Check for convergence and trigger restart if needed
-            if self.rank == 0 and self.iteration > 0 and self.iteration % plot_interval == 0:
-                best_solution = self.return_candidate_solution()
-                self.best_solutions.append(best_solution)
-                if self.iteration >= max_iter:
-                    self.restart()
-
-    def restart(self):
-        """
-        Handles the restart logic by increasing the population size and resetting necessary parameters.
-        """
-        if self.rank == 0:
-            print('Restarting CMA-ES with increased population size...')
-        self.lmbda += 10  # Increase population size by 10
-        self.mu = np.floor(self.lmbda / 2)
-        self.weights = np.array([np.log(self.mu + 1) - np.log(np.arange(1, self.mu + 1))]).T
-        self.weights /= sum(self.weights)
-        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
-        self.ps = np.zeros_like(self.xmean)
-        self.pc = np.zeros_like(self.xmean)
-        self.B = np.eye(self.n, self.n)
-        self.D = np.ones((self.n, 1))
-        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
-        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
-        self.eigeneval = 0
-        self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
-        self.mutants = np.zeros((self.n, self.lmbda))
-        self.counteval = 0
 
     def _transform_mutants(self):
         """

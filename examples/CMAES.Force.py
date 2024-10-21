@@ -209,15 +209,15 @@ if __name__=='__main__':
     GREENS = [greens_sw] if mode == 'greens' else None  # add more as needed
 
     popsize = 48 # -- CMA-ES population size (you can play with this value)
-    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id)
+    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id, restart=True)
     CMA.sigma = 3 # -- CMA-ES step size, defined as the standard deviation of the population can be ajusted here (3 ~ 4 seems to provide a balanced exploration/exploitation and avoid getting stuck in local minima). 
     # The default value is otherwise 1 standard deviation (you can play with this value)
     iter = 80 # -- Number of iterations (you can play with this value)
 
     if mode == 'database':
-        CMA.Solve(DATA, stations, MISFIT, PROCESS, db, iter, wavelet, plot_interval=10, misfit_weights=[1.])
+        CMA.Solve(DATA, stations, MISFIT, PROCESS, db, iter, wavelet, plot_interval=10, misfit_weights=[1.], restart=True)
     elif mode == 'greens':
-        CMA.Solve(DATA, stations, MISFIT, PROCESS, GREENS, iter, plot_interval=10, misfit_weights=[1.])
+        CMA.Solve(DATA, stations, MISFIT, PROCESS, GREENS, iter, plot_interval=10, misfit_weights=[1.], restart=True)
 
     if comm.rank==0:
         result = CMA.mutants_logger_list # -- This is the list of mutants (i.e. the population) at each iteration
@@ -228,16 +228,3 @@ if __name__=='__main__':
 
     if comm.rank==0:
         print('\nFinished\n')
-
-    # Example to demonstrate the restart functionality
-    if comm.rank==0:
-        print('Demonstrating the restart functionality...\n')
-        parameter_list = initialize_force(F0_range=[1e10, 1e12])
-        CMA = CMA_ES(parameter_list, origin=origin, lmbda=popsize, event_id=event_id)
-        CMA.sigma = 3
-        iter = 80
-        if mode == 'database':
-            CMA.Solve(DATA, stations, MISFIT, PROCESS, db, iter, wavelet, plot_interval=10, misfit_weights=[1.])
-        elif mode == 'greens':
-            CMA.Solve(DATA, stations, MISFIT, PROCESS, GREENS, iter, plot_interval=10, misfit_weights=[1.])
-        print('Restart functionality demonstration completed.\n')
