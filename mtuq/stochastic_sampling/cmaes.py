@@ -63,6 +63,14 @@ class CMA_ES(object):
         The current iteration number.
     counteval : int
         The number of function evaluations.
+    ipop : bool
+        Whether to use the IPOP method (Increasing Population CMA-ES).
+    max_restart : int
+        The maximum number of restarts for IPOP.
+    lambda_increase_factor : float
+        The factor by which to increase lambda at each restart.
+    patience : int
+        The number of iterations to wait before restarting under no significant improvement.
     _greens_tensors_cache : dict
         A cache for Green's tensors.
     mu : int
@@ -101,12 +109,6 @@ class CMA_ES(object):
         The expected length of the evolution path.
     mutants : numpy.ndarray
         The array of mutants.
-    cache_size : int
-        The number of iterations to cache.
-    cache_counter : int
-        The counter for cached iterations.
-    mutants_cache : numpy.ndarray
-        The cache for mutants.
     mutants_logger_list : pandas.DataFrame
         The logger for mutants.
     mean_logger_list : pandas.DataFrame
@@ -131,7 +133,7 @@ class CMA_ES(object):
     _set_default_callback(self)
         Sets the default callback function based on the parameter names.
     _setup_caches(self)
-        Initializes caches and logging variables for performance tracking.
+        Initializes pandas DataFrames for logging. Used for post-processing and plotting.
     draw_mutants(self)
         Draws mutants from a Gaussian distribution and scatters them across MPI processes.
     _generate_mutants(self)
@@ -194,7 +196,17 @@ class CMA_ES(object):
         Computes the norm of the data using the calculate_norm_data function.
     """
 
-    def __init__(self, parameters_list: list, origin: Origin, lmbda: int = None, callback_function=None, event_id: str = '', verbose_level: int = 0):
+    def __init__(
+            self, 
+            parameters_list: list, 
+            origin: Origin, lmbda: int = None, 
+            callback_function=None, 
+            event_id: str = '', 
+            verbose_level: int = 0, 
+            ipop: bool = False, 
+            max_restart: int = 5,
+            lambda_increase_factor: float = 2,
+            patience: int = 20,):
         """
         Initializes the CMA-ES class with the given parameters.
 
@@ -218,6 +230,9 @@ class CMA_ES(object):
         self._initialize_mpi_communicator()
         self._initialize_logging(event_id, verbose_level)
         self._initialize_parameters(parameters_list, lmbda, origin, callback_function)
+        self.ipop = ipop
+        if self.ipop:
+            self._initialize_ipop(max_restart, lambda_increase_factor, patience)
         
         # Set up caches and storage for logging
         self._setup_caches()
@@ -263,6 +278,9 @@ class CMA_ES(object):
         else:
             self.lmbda = lmbda
 
+        # Initialize the misfit holder which will store the misfit values for each mutant for a given iteration
+        self._misfit_holder = np.zeros((int(self.lmbda), 1))
+
         # Ensure that the number of MPI processes is not greater than the population size
         if self.size > self.lmbda:
             raise ValueError(f'Number of MPI processes ({self.size}) exceeds population size ({self.lmbda})')
@@ -281,7 +299,7 @@ class CMA_ES(object):
 
         # Initialize parameters tied to the CMA-ES algorithm
         self.xmean = np.asarray([[param.initial for param in self._parameters]]).T
-        self.sigma = 0.5  # Default initial Gaussian variance for all parameters
+        self.sigma = 1.67  # Default initial Gaussian variance for all parameters
         self.iteration = 0
         self.counteval = 0
         self._greens_tensors_cache = {}
@@ -314,6 +332,98 @@ class CMA_ES(object):
         self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
         self.mutants = np.zeros((self.n, self.lmbda))
 
+    def _initialize_ipop(self, max_restarts: int = 10, lambda_increase_factor: float = 2.0, patience: int = 20):
+        """
+        Initializes the IPOP (Increasing Population) strategy for the CMA-ES algorithm.
+
+        Parameters
+        ----------
+        max_restarts : int, optional
+            Maximum number of restarts allowed. Default is 10.
+        lambda_increase_factor : float, optional
+            Factor by which to increase lambda upon each restart. Default is 2.0.
+        patience : int, optional
+            Number of iterations to wait without improvement before restarting. Default is 20.
+        """
+        self.ipop = True
+        self.ipop_terminated = False
+        self.max_restarts = max_restarts
+        self.lambda_increase_factor = lambda_increase_factor
+        self.patience = patience
+        self.current_restarts = 0
+        self.no_improve_counter = 0
+        self.best_misfit = np.inf
+        self.best_solution = None
+        self.best_origins = None
+
+        if self.rank == 0:
+            print("IPOP strategy initialized with the following parameters:")
+            print(f"  Max Restarts: {self.max_restarts}")
+            print(f"  Lambda Increase Factor: {self.lambda_increase_factor}")
+            print(f"  Patience: {self.patience} iterations without improvement")
+
+    def _restart_ipop(self):
+        """
+        Handles the restart mechanism for the IPOP strategy by increasing the population size
+        and reinitializing CMA-ES parameters.
+        """
+        if self.current_restarts >= self.max_restarts:
+            if self.rank == 0:
+                print(f"Maximum number of restarts ({self.max_restarts}) reached. Terminating optimization.")
+            raise StopIteration("IPOP-CMA-ES: Maximum restarts reached.")
+
+        # Increase population size
+        new_lambda = int(self.lmbda * self.lambda_increase_factor)
+        if self.rank == 0:
+            print(f"Restarting CMA-ES with increased population size: {new_lambda}")
+
+        # Update lambda
+        self.lmbda = new_lambda
+
+        self._misfit_holder = np.zeros((int(self.lmbda), 1))
+
+        # Reinitialize CMA-ES parameters
+        self.iteration = 0
+        # self.counteval = 0
+        self.mutants = np.zeros((self.n, self.lmbda))
+
+        # Reset step-size and covariance-related variables
+        restart_from_best = False
+        if restart_from_best:
+            self.xmean = np.asarray([self.best_solution.copy()]).T
+        else:
+            # restart at random
+            self.xmean = np.random.uniform(0, 10, (self.n, 1))
+            
+        self.sigma = 1.67  # You might want to adjust this based on your problem
+        self.B = np.eye(self.n, self.n)
+        self.D = np.ones((self.n, 1))
+        self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
+        self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
+        self.ps = np.zeros_like(self.xmean)
+        self.pc = np.zeros_like(self.xmean)
+        self.eigeneval = 0
+
+        # Update weights and related parameters based on new lambda
+        self.mu = np.floor(self.lmbda / 2)
+        a = 1  # Use 1 in publication
+        self.weights = np.array([np.log(self.mu + a) - np.log(np.arange(1, self.mu + 1))]).T
+        self.weights /= sum(self.weights)
+        self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+
+        # Step-size control parameters
+        self.cs = (self.mueff + 2) / (self.n + self.mueff + 5)
+        self.damps = 1 + 2 * max(0, np.sqrt((self.mueff - 1) / (self.n + 1)) - 1) + self.cs
+
+        # Covariance matrix adaptation parameters
+        self.cc = (4 + self.mueff / self.n) / (self.n + 4 + 2 * self.mueff / self.n)
+        self.acov = 2
+        self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
+        self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov * self.mueff / 2))
+
+        self.current_restarts += 1
+        self.no_improve_counter = 0  # Reset patience counter
+
     def _set_default_callback(self):
         """Sets the default callback function based on the parameter names."""
         if 'Mw' in self._parameters_names or 'kappa' in self._parameters_names:
@@ -333,17 +443,14 @@ class CMA_ES(object):
             self.mode = 'force'
 
     def _setup_caches(self):
-        """Initializes caches and logging variables for performance tracking."""
-        self.cache_size = 10  # Number of iterations to cache
-        self.cache_counter = 0  # To keep track of cached iterations
-        self.mutants_cache = np.zeros((self.n + 1, self.lmbda * self.cache_size))  # For storing [parameters + misfit]
+        """Initializes pandas DataFrames for logging. Used for post-processing and plotting."""
         self.mutants_logger_list = pd.DataFrame()
         self.mean_logger_list = pd.DataFrame()
 
-        # Define holder variables for post-processing and plotting
-        self._misfit_holder = np.zeros((int(self.lmbda), 1))
+        # Define holder variables for plotting
         self.fig = None
         self.ax = None
+
 
     # Where the mutants are generated ... --------------------------------------------------------------
     def draw_mutants(self):
@@ -721,8 +828,26 @@ class CMA_ES(object):
             The updated misfit_holder. Reset to 0 after sorting.
         """
         if self.rank == 0:
-            self.mutants = self.mutants[:, np.argsort(misfit.T)[0]]
-            self.transformed_mutants = self.transformed_mutants[:, np.argsort(misfit.T)[0]]
+            sorted_indices = np.argsort(misfit.T)[0]
+            self.mutants = self.mutants[:, sorted_indices]
+            self.transformed_mutants = self.transformed_mutants[:, sorted_indices]
+
+            # Update best solution
+            if self.ipop:
+                if misfit.min() < self.best_misfit:
+                    self.best_misfit = misfit.min()
+                    self.best_solution = self.mutants[:, 0].copy()
+                    # self.best_origins = [self.origins[sorted_indices[0]]]
+
+                    # Reset patience counter
+                    self.no_improve_counter = 0
+                else:
+                    self.no_improve_counter += 1
+            else:
+                self.best_misfit = misfit.min()
+                self.best_solution = self.mutants[:, 0].copy()
+                # self.best_origins = [self.origins[sorted_indices[0]]]
+
         self._misfit_holder *= 0
 
     def update_step_size(self):
@@ -905,7 +1030,7 @@ class CMA_ES(object):
             if not id == None:
                 return_x = np.array([self.mutants[:, id]]).T
             else:
-                return_x = self.xmean
+                return_x = np.asarray([self.best_solution.copy()]).T
             self.transformed_mean = np.zeros_like(return_x)
             for _i, param in enumerate(self._parameters):
                 # Print paramter scaling if verbose
@@ -947,7 +1072,7 @@ class CMA_ES(object):
 
     def _datalogger(self, mean=False):
         """
-        Logs the coordinates and misfit values of the mutants.
+        Logs the coordinates and misfit values of the mutants or the mean solution.
 
         Parameters
         ----------
@@ -960,33 +1085,44 @@ class CMA_ES(object):
             The logged data.
         """
         if self.rank == 0:
-            if mean == False:
+            if not mean:
                 coordinates = self.transformed_mutants.T
                 misfit_values = self._misfit_holder
                 results = np.hstack((coordinates, misfit_values))
                 columns_labels = self._parameters_names + ['misfit']
+                da = pd.DataFrame(
+                    data=results,
+                    columns=columns_labels
+                )
+                return MTUQDataFrame(da)
 
-            if mean == True:
-                self.transformed_mean = np.zeros_like(self.xmean)
+            if mean:
+                transformed_mean = np.zeros_like(self.xmean)
                 for _i, param in enumerate(self._parameters):
                     if param.scaling == 'linear':
-                        self.transformed_mean[_i] = linear_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
+                        transformed_mean[_i] = linear_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
                     elif param.scaling == 'log':
-                        self.transformed_mean[_i] = logarithmic_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
+                        transformed_mean[_i] = logarithmic_transform(self.xmean[_i], param.lower_bound, param.upper_bound)
                     else:
                         raise ValueError('Unrecognized scaling, must be linear or log')
                     # Apply optional projection operator to each parameter
                     if not param.projection is None:
-                        self.transformed_mean[_i] = np.asarray(list(map(param.projection, self.transformed_mean[_i])))
+                        transformed_mean[_i] = np.asarray(list(map(param.projection, transformed_mean[_i])))
 
-                results = self.transformed_mean.T
+                # Include restart information
+                results = transformed_mean.T
                 columns_labels = self._parameters_names
 
-            da = pd.DataFrame(
-                data=results,
-                columns=columns_labels
-            )
-            return MTUQDataFrame(da)
+                # Add a 'restart' column
+                df = pd.DataFrame(
+                    data=results,
+                    columns=columns_labels
+                )
+                if self.ipop:
+                    df['restart'] = self.current_restarts  # Tag with current restart number
+
+                return MTUQDataFrame(df)
+
 
     def _prep_and_cache_C_arrays(self, data, greens, misfit, stations):
         """
@@ -1143,9 +1279,10 @@ class CMA_ES(object):
 
         misfit_weights = [w / total_weight for w in misfit_weights]
 
-        for i in range(max_iter):
+        iteration = 0
+        while iteration < max_iter:
             if self.rank == 0:
-                print('Iteration %d\n' % (i + iter_count))
+                print('Iteration %d\n' % (iteration + iter_count + 1))
             
             self.draw_mutants()
 
@@ -1159,7 +1296,7 @@ class CMA_ES(object):
                 if mode == 'db':
                     misfit_values = self.eval_fitness(current_data, stations, current_misfit, db, process_list[j], wavelet, **kwargs)
                 elif mode == 'greens':
-                    if i == 1 and type(current_misfit) == WaveformMisfit:
+                    if iteration == 1 and type(current_misfit) == WaveformMisfit:
                         raw_greens_to_cache = copy.deepcopy(greens)
                         raw_data_to_cache = copy.deepcopy(current_data)
                         self._prep_and_cache_C_arrays(raw_data_to_cache, raw_greens_to_cache, current_misfit, stations)
@@ -1178,29 +1315,35 @@ class CMA_ES(object):
             self.update_step_size()
             self.update_covariance()
 
-            if i != 0 and i % plot_interval == 0 or i == max_iter - 1:
-                if self.rank == 0:
-                    plot_mean_waveforms(self, data_list, process_list, misfit_list, stations, db_or_greens_list)
-                    if self.mode in ['mt', 'mt_dc', 'mt_dev']:
-                        print('Plotting results for iteration %d\n' % (i + iter_count))
-                        result = self.mutants_logger_list
+            # Check for improvement to decide on restarting
+            if self.ipop:
+                # Condition to trigger a restart:
+                # - Either no improvement over 'patience' iterations
+                # - Or reached the maximum number of iterations
+                restart_condition = self.no_improve_counter >= self.patience or iteration >= max_iter - 1
 
-                        # Handling the mean solution
-                        if self.mode == 'mt':
-                            V, W = self._datalogger(mean=True)['v'], self._datalogger(mean=True)['w']
-                        elif self.mode == 'mt_dev':
-                            V = self._datalogger(mean=True)['v']
-                            W = 0
-                        elif self.mode == 'mt_dc':
-                            V = W = 0
+                if restart_condition and self.current_restarts < self.max_restarts:
+                    if self.rank == 0:
+                        reason = "no improvement" if self.no_improve_counter >= self.patience else "reached max_iter"
+                        print(f"No improvement ({reason}). Initiating IPOP restart #{self.current_restarts + 1}.")
+                    self._restart_ipop()
+                    iteration = 0  # Reset iteration counter for the new run
+                    continue  # Skip plotting in this iteration
 
-                    # If mode is mt, mt_dev or mt_dc, plot the misfit map
-                    if self.mode in ['mt', 'mt_dev', 'mt_dc']:
-                        plot_combined(self.event_id + '_combined_misfit_map.png', result, colormap='viridis', best_vw=(V, W))
-                    elif self.mode == 'force':
-                        print('Plotting results for iteration %d\n' % (i + iter_count))
-                        result = self.mutants_logger_list
-                        plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
+                elif restart_condition and self.current_restarts >= self.max_restarts:
+                    if self.rank == 0:
+                        print(f"No improvement and reached maximum number of IPOP restarts ({self.max_restarts}). Terminating optimization.")
+                        self.iteration = len(self.mean_logger_list)
+                        self.ipop_terminated = True
+                    break
+
+
+            self._iteration_plots(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
+            
+            iteration += 1
+        # Trigger a final plotting at the end of the optimization
+        self._iteration_plots(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
+
 
 
     def _transform_mutants(self):
@@ -1415,3 +1558,22 @@ class CMA_ES(object):
                 components = list(''.join(misfit.time_shift_groups))
             
             return calculate_norm_data(data, misfit.norm, components)
+
+    def _iteration_plots(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration):
+        if (iteration + 1) % plot_interval == 0 or iteration == max_iter - 1 or (self.ipop and self.ipop_terminated):
+            if self.rank == 0:
+                plot_mean_waveforms(self, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration)
+                if self.mode in ['mt', 'mt_dc', 'mt_dev']:
+                    print('Plotting results for iteration %d\n' % (iteration + iter_count))
+                    result = self.mutants_logger_list
+
+                    # Handling the mean solution
+                    V,W = self.return_candidate_solution()[0][1:3]
+
+                    # If mode is mt, mt_dev or mt_dc, plot the misfit map
+                if self.mode in ['mt', 'mt_dev', 'mt_dc']:
+                    plot_combined(self.event_id + '_combined_misfit_map.png', result, colormap='viridis', best_vw=(V, W))
+                elif self.mode == 'force':
+                    print('Plotting results for iteration %d\n' % (iteration + iter_count))
+                    result = self.mutants_logger_list
+                    plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
