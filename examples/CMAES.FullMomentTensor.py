@@ -16,7 +16,7 @@ from mtuq.util.math import to_gamma, to_delta
 from mtuq.graphics.uq.lune import plot_misfit_lune
 from mtuq.graphics.uq._matplotlib import _plot_lune_matplotlib
 from mtuq.graphics import plot_combined
-from mtuq.stochastic_sampling.cmaes_plotting import _cmaes_scatter_plot
+from mtuq.stochastic_sampling.cmaes_plotting import _cmaes_scatter_plot, _cmaes_scatter_plot_dc
 
 def plot_lune(CMA, p):
     ''' Temporary function to plot the lune distribution of mutants. This
@@ -255,9 +255,9 @@ if __name__=='__main__':
     PROCESS = [process_bw, process_sw]  # add more as needed
     GREENS = [greens_bw, greens_sw] if mode == 'greens' else None  # add more as needed
 
-    popsize = 48 # -- CMA-ES population size - number of mutants (you can play with this value, 24 to 120 is a good range)
-    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id)
-    CMA.sigma = 5.0 # -- CMA-ES step size, defined as the standard deviation of the population can be ajusted here (4 ~ 5 seems to provide a balanced exploration/exploitation and avoid getting stuck in local minima). 
+    popsize = 240 # -- CMA-ES population size - number of mutants (you can play with this value, 24 to 120 is a good range)
+    CMA = CMA_ES(parameter_list , origin=origin, lmbda=popsize, event_id=event_id, ipop=False)
+    CMA.sigma = 1.67 # -- CMA-ES step size, defined as the standard deviation of the population can be ajusted here (4 ~ 5 seems to provide a balanced exploration/exploitation and avoid getting stuck in local minima). 
     # The default value is otherwise 1 standard deviation (you can play with this value)
     iter = 60 # -- Number of iterations (you can play with this value, 120 to 240 is a good range)
 
@@ -271,9 +271,12 @@ if __name__=='__main__':
         # This is a mtuq.grid_search.MTUQDataFrame object, which is the same as when conducting a random grid-search
         # It is therefore compatible with the "regular" plotting functions in mtuq.graphics 
         fig = _cmaes_scatter_plot(CMA) # -- This is a scatter plot of the mutants at the last iteration
-        fig.savefig(event_id+'CMA-ES_final_step.png')
+        fig.savefig(event_id+'CMA-ES_final_step.pdf')
+        fig2 = _cmaes_scatter_plot_dc(CMA)
+        fig2.savefig(event_id+'CMA-ES_final_step_dc.pdf')
 
     if comm.rank==0:
+        print("Total number of misfit evaluations: ", CMA.counteval)
         print('\nFinished\n')
 
     # ================================================================================================

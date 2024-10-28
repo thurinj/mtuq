@@ -224,7 +224,7 @@ if __name__=='__main__':
         # This is a mtuq.grid_search.MTUQDataFrame object, which is the same as when conducting a random grid-search
         # It is therefore compatible with the "regular" plotting functions in mtuq.graphics 
         fig = _cmaes_scatter_plot(CMA) # -- This is a scatter plot of the mutants at the last iteration
-        fig.savefig(event_id+'CMA-ES_final_step.png')
+        fig.savefig(event_id+'CMA-ES_final_step.pdf')
 
     if comm.rank==0:
         print('\nFinished\n')
