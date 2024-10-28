@@ -7,8 +7,11 @@ from mtuq.grid.moment_tensor import UnstructuredGrid
 from mtuq.grid.force import UnstructuredGrid
 from mtuq.misfit import Misfit, PolarityMisfit
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
-def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_or_greens_list):
+
+def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration):
     """
     Plots the mean waveforms using the base mtuq waveform plots (mtuq.graphics.waveforms).
 
@@ -110,13 +113,16 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
             del misfit[i]
             del greens[i]
 
+    # Include the restart information in the filename _iteration_restart
+    name_string = CMA.event_id + '_waveforms_mean_restart_' + str(CMA.current_restarts) + '_' + str(iteration + 1) if CMA.ipop == True else CMA.event_id + '_waveforms_mean_' + str(iteration + 1)
+
     # Plot based on the number of ProcessData objects in the process_list
     if len(process) == 2:
-        plot_data_greens2(CMA.event_id + '_waveforms_mean_' + str(CMA.iteration) + '.png',
+        plot_data_greens2(name_string + '.png',
                             data[0], data[1], greens[0], greens[1], process[0], process[1],
                             misfit[0], misfit[1], stations, final_origin, best_source, lune_dict)
     elif len(process) == 1:
-        plot_data_greens1(CMA.event_id + '_waveforms_mean_' + str(CMA.iteration) + '.png',
+        plot_data_greens1(name_string + '.png',
                             data[0], greens[0], process[0], misfit[0], stations, final_origin, best_source, lune_dict)
 
 
@@ -142,6 +148,7 @@ def _cmaes_scatter_plot(CMA):
 
             # Define v as by values from CMA.mutants_logger_list if it exists, otherwise pad with values of zeroes
             m = np.asarray(CMA.mutants_logger_list['misfit'])
+            sorted_indices = np.argsort(m)[::-1]
 
             if 'v' in CMA.mutants_logger_list:
                 v = np.asarray(CMA.mutants_logger_list['v'])
@@ -153,24 +160,26 @@ def _cmaes_scatter_plot(CMA):
             else:
                 w = np.zeros_like(m)
 
-            # Handling the mean solution
-            if CMA.mode == 'mt':
-                V, W = CMA._datalogger(mean=True)['v'], CMA._datalogger(mean=True)['w']
-            elif CMA.mode == 'mt_dev':
-                V = CMA._datalogger(mean=True)['v']
-                W = 0
-            elif CMA.mode == 'mt_dc':
-                V = W = 0
+            # Handling the mean solutions
+            V, W = CMA.mean_logger_list['v'], CMA.mean_logger_list['w']
+            if CMA.ipop:
+                restart = CMA.mean_logger_list['restart']
+            else:
+                restart = np.zeros_like(V)
 
             # Projecting the mean solution onto the lune
             V, W = _hammer_projection(to_gamma(V), to_delta(W))
-            CMA.ax.scatter(V, W, c='red', marker='x', zorder=10000000)
+            CMA.ax.scatter(V, W, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
             # Projecting the mutants onto the lune
             v, w = _hammer_projection(to_gamma(v), to_delta(w))
 
             vmin, vmax = np.percentile(np.asarray(m), [0, 90])
 
-            CMA.ax.scatter(v, w, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100)
+            CMA.ax.scatter(v[sorted_indices], w[sorted_indices], c=m[sorted_indices], s=3, vmin=vmin, vmax=vmax, zorder=100)
+
+            # Add the mean solution to the plot
+
+
 
             CMA.fig.canvas.draw()
             return CMA.fig
@@ -185,9 +194,13 @@ def _cmaes_scatter_plot(CMA):
             latitude = np.degrees(np.pi / 2 - np.arccos(h))
             longitude = wrap_180(phi + 90)
             # Getting mean solution
-            PHI, H = CMA._datalogger(mean=True)['phi'], CMA._datalogger(mean=True)['h']
+            PHI, H = CMA.mean_logger_list['phi'], CMA.mean_logger_list['h']
             LATITUDE = np.asarray(np.degrees(np.pi / 2 - np.arccos(H)))
             LONGITUDE = wrap_180(np.asarray(PHI + 90))
+            if CMA.ipop:
+                restart = CMA.mean_logger_list['restart']
+            else:
+                restart = np.zeros_like(LATITUDE)
 
             # Projecting the mean solution onto the sphere
             LONGITUDE, LATITUDE = _hammer_projection(LONGITUDE, LATITUDE)
@@ -196,6 +209,119 @@ def _cmaes_scatter_plot(CMA):
 
             vmin, vmax = np.percentile(np.asarray(m), [0, 90])
 
-            CMA.ax.scatter(longitude, latitude, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100)
-            CMA.ax.scatter(LONGITUDE, LATITUDE, c='red', marker='x', zorder=10000000)
+            CMA.ax.scatter(longitude, latitude, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100, cmap='Greys_r')
+            CMA.ax.scatter(LONGITUDE, LATITUDE, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+
+            CMA.fig.tight_layout()
+
             return CMA.fig
+        
+
+
+def _cmaes_scatter_plot_dc(CMA):
+    """
+    Generates a scatter plot of the mutants and the current mean solution on the three DC quadrants
+    
+    Parameters
+    ----------
+    CMA : CMA_ES    
+        The CMA_ES object containing the necessary information for plotting.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object for the plot.
+    """
+    if CMA.rank == 0:
+        # Define v as by values from CMA.mutants_logger_list if it exists, otherwise pad with values of zeroes
+        m = np.asarray(CMA.mutants_logger_list['misfit'])
+        sorted_indices = np.argsort(m)[::-1]
+
+        kappa = np.asarray(CMA.mutants_logger_list['kappa'])
+        sigma = np.asarray(CMA.mutants_logger_list['sigma'])
+        h = np.asarray(CMA.mutants_logger_list['h'])
+        # omega = np.rad2deg(np.arccos(h))
+        omega = h
+
+        # Handling the mean solutions
+        KAPPA, SIGMA, H = CMA.mean_logger_list['kappa'], CMA.mean_logger_list['sigma'], CMA.mean_logger_list['h']
+        # OMEGA = np.rad2deg(np.arccos(H))
+        OMEGA = H
+        if CMA.ipop:
+            restart = CMA.mean_logger_list['restart']
+        else:
+            restart = np.zeros_like(KAPPA)
+
+        vmin, vmax = np.percentile(np.asarray(m), [0, 90])
+
+        fig = plt.figure(figsize=(5, 5))
+        gs = GridSpec(2, 2, figure=fig)
+
+        # Turn off the unused subplot (bottom-left)
+        ax_unused = fig.add_subplot(gs[1, 0])
+        ax_unused.axis('off')
+
+        kappa_ticks = [0, 45, 90, 135, 180, 225, 270, 315, 360]
+        kappa_ticklabels = ['0', '', '90', '', '180', '', '270', '', '360']
+
+        sigma_ticks = [-90, -67.5, -45, -22.5, 0, 22.5, 45, 67.5, 90]
+        sigma_ticklabels = ['-90', '', '-45', '', '0', '', '45', '', '90']
+
+        h_ticks = [np.cos(np.radians(tick)) for tick in [0, 15, 30, 45, 60, 75, 90]]
+        h_ticklabels = ['0', '', '30', '', '60', '', '90']
+        
+
+        # Plotting kappa vs omega in the top-right subplot, sharing x-axis with ax1
+        ax1 = fig.add_subplot(gs[0, 0])
+        scatter1 = ax1.scatter(omega[sorted_indices], kappa[sorted_indices], c=m[sorted_indices], s=3,
+                            vmin=vmin, vmax=vmax, zorder=100)
+        ax1.scatter(OMEGA, KAPPA, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+        ax1.set_xlabel('Dip')
+        ax1.set_ylabel('Strike')
+
+        ax1.set_xlim(1, 0)
+        ax1.set_ylim(0, 360)
+
+        ax1.set_xticks(h_ticks)
+        ax1.set_xticklabels(h_ticklabels)
+        ax1.set_yticks(kappa_ticks)
+        ax1.set_yticklabels(kappa_ticklabels)
+
+
+        # Plotting kappa vs sigma in the top-left subplot
+        ax2 = fig.add_subplot(gs[0, 1], sharey=ax1)
+        scatter2 = ax2.scatter(sigma[sorted_indices], kappa[sorted_indices], c=m[sorted_indices], s=3,
+                            vmin=vmin, vmax=vmax, zorder=100)
+        ax2.scatter(SIGMA, KAPPA, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+        ax2.set_ylabel('Strike')
+        ax2.set_xlabel('Rake')
+
+        ax2.set_xlim(-90, 90)
+
+        ax2.set_xticks(sigma_ticks)
+        ax2.set_xticklabels(sigma_ticklabels)
+        ax2.set_yticks(kappa_ticks)
+        ax2.set_yticklabels(kappa_ticklabels)
+
+        # Plotting sigma vs omega in the bottom-right subplot, sharing y-axis with ax2
+        ax3 = fig.add_subplot(gs[1, 1], sharex=ax2)
+        scatter3 = ax3.scatter(sigma[sorted_indices], omega[sorted_indices], c=m[sorted_indices], s=3,
+                            vmin=vmin, vmax=vmax, zorder=100)
+        ax3.scatter(SIGMA, OMEGA, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+        ax3.set_xlabel('Rake')
+        ax3.set_ylabel('Dip')
+
+        ax3.set_ylim(0, 1)
+
+
+        ax3.set_xticks(sigma_ticks)
+        ax3.set_xticklabels(sigma_ticklabels)
+        ax3.set_yticks(h_ticks)
+        ax3.set_yticklabels(h_ticklabels)
+
+        # Adjust layout to prevent overlap
+        fig.tight_layout()
+
+        # Return the figure
+        return fig
+        
