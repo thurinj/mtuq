@@ -21,6 +21,16 @@ from mtuq.stochastic_sampling.cmaes_init import (
     _restart_ipop,
     _setup_caches,
 )
+from mtuq.stochastic_sampling.cmaes_mutants import (
+    draw_mutants,
+    draw_single_mutant,
+    generate_mutants,
+    repair_and_redraw_mutants,
+    redraw_param_until_valid,
+    apply_repair_to_param,
+    scatter_mutants,
+    receive_mutants,
+)
 from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms
 from mtuq.stochastic_sampling.cmaes_utils import (
     Repair,
@@ -246,104 +256,6 @@ class CMA_ES(object):
         
         # Set up caches and storage for logging
         _setup_caches(self)
-
-    # Where the mutants are generated ... --------------------------------------------------------------
-    def draw_mutants(self):
-        """
-        Draws mutants from a Gaussian distribution and scatters them across MPI processes.
-        
-        This function generates `self.lmbda` mutants from a multivariate normal distribution, applies bounds
-        and repair methods where necessary, and scatters the mutants to all processes for parallel evaluation.
-
-        Returns
-        -------
-        None
-        """
-        if self.rank == 0:
-            # Generate mutants on the root process
-            self._generate_mutants()
-
-            # Apply repairs and redraws parameter by parameter
-            self._repair_and_redraw_mutants()
-
-            # Scatter mutants to all processes
-            self._scatter_mutants()
-        else:
-            # Receive mutants on non-root processes
-            self._receive_mutants()
-
-        # Slice the data for the current process
-        self.scattered_mutants = self.mutant_slice
-
-        # Increase the counter for misfit evaluations (each mutant will be evaluated once)
-        self.counteval += self.lmbda
-
-    def _generate_mutants(self):
-        """Generates all `self.lmbda` mutants from a Gaussian distribution."""
-        for i in range(self.lmbda):
-            mutant = self._draw_single_mutant()
-            self.mutants[:, i] = mutant.flatten()
-
-    def _draw_single_mutant(self):
-        """Draws a single mutant from the Gaussian distribution."""
-        return self.xmean + self.sigma * self.B @ (self.D * np.random.randn(self.n, 1))
-
-    def _repair_and_redraw_mutants(self):
-        """Applies repair methods and redraws to all mutants, parameter by parameter."""
-        bounds = [0, 10]  # Define the hardcoded bounds
-        redraw_counter = 0
-
-        # Iterate over each parameter (column)
-        for param_idx in range(self.n):
-            # Extract the full array of parameter values for this parameter across all mutants
-            param_values = self.mutants[param_idx, :]
-
-            # First, check if any repair or redraw is needed
-            if array_in_bounds(param_values, bounds[0], bounds[1]):
-                continue  # Skip if all values are already in bounds
-
-            # Check if repair is defined for this parameter
-            if self._parameters[param_idx].repair is None:
-                # Redraw only the out-of-bounds parameter values across all mutants
-                self.mutants[param_idx, :], was_redrawn = self._redraw_param_until_valid(param_values, bounds)
-                if was_redrawn:
-                    redraw_counter += 1
-                print(f'Redrawn {redraw_counter} out-of-bounds mutants for parameter {self._parameters[param_idx].name}')
-            else:
-                # Apply repair method to the entire array of parameter values across all mutants
-                self.mutants[param_idx, :] = self._apply_repair_to_param(param_values, bounds, param_idx)
-
-    def _redraw_param_until_valid(self, param_values, bounds):
-        """Redraws the out-of-bounds values of a parameter array until they are within bounds."""
-        was_redrawn = False
-        for i in range(len(param_values)):
-            while not in_bounds(param_values[i], bounds[0], bounds[1]):
-                param_values[i] = np.random.randn()  # Redraw only for the specific out-of-bounds value
-                was_redrawn = True
-        return param_values, was_redrawn
-
-    def _apply_repair_to_param(self, param_values, bounds, param_idx):
-        """Applies a repair method to the full array of parameter values if defined."""
-        param = self._parameters[param_idx]
-        printed_repair = False
-        # Keep applying repair until all values in the array are within bounds
-        while not array_in_bounds(param_values, bounds[0], bounds[1]):
-            if self.verbose_level >= 0 and not printed_repair:
-                print(f'Repairing parameter {param.name} using method {param.repair}')
-                printed_repair = True
-            Repair(param.repair, param_values, self.xmean[param_idx])
-        
-        return param_values
-
-    def _scatter_mutants(self):
-        """Splits and scatters the mutants across processes."""
-        self.mutant_lists = np.array_split(self.mutants, self.size, axis=1)
-        self.mutant_slice = self.comm.scatter(self.mutant_lists, root=0)
-
-    def _receive_mutants(self):
-        """Receives scattered mutants on non-root processes."""
-        self.mutant_slice = self.comm.scatter(None, root=0)
-
 
     # Where the mutants are evaluated ... --------------------------------------------------------------
     def eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False):
@@ -1079,7 +991,7 @@ class CMA_ES(object):
             if self.rank == 0:
                 print('Iteration %d\n' % (iteration + iter_count + 1))
             
-            self.draw_mutants()
+            draw_mutants(self)
 
             misfits = []
             for j, (current_data, current_misfit, process) in enumerate(zip(data_list, misfit_list, process_list)):
@@ -1359,7 +1271,7 @@ class CMA_ES(object):
             if self.rank == 0:
                 plot_mean_waveforms(self, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration)
                 if self.mode in ['mt', 'mt_dc', 'mt_dev']:
-                    print('Plotting results for iteration %d\n' % (iteration + iter_count))
+                    print('Plotting results for iteration %d\n' % (iteration + 1 + iter_count))
                     result = self.mutants_logger_list
 
                     # Handling the mean solution
@@ -1369,6 +1281,6 @@ class CMA_ES(object):
                 if self.mode in ['mt', 'mt_dev', 'mt_dc']:
                     plot_combined(self.event_id + '_combined_misfit_map.png', result, colormap='viridis', best_vw=(V, W))
                 elif self.mode == 'force':
-                    print('Plotting results for iteration %d\n' % (iteration + iter_count))
+                    print('Plotting results for iteration %d\n' % (iteration + 1 +iter_count))
                     result = self.mutants_logger_list
                     plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])

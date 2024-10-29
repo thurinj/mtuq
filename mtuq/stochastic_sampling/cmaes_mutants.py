@@ -1,0 +1,85 @@
+import numpy as np
+from mtuq.stochastic_sampling.cmaes_utils import array_in_bounds, in_bounds, Repair
+
+def generate_mutants(cmaes_instance):
+    """
+    Generates all mutants from a Gaussian distribution.
+    """
+    for i in range(cmaes_instance.lmbda):
+        mutant = draw_single_mutant(cmaes_instance)
+        cmaes_instance.mutants[:, i] = mutant.flatten()
+
+def draw_single_mutant(cmaes_instance):
+    """
+    Draws a single mutant from the Gaussian distribution.
+    """
+    return cmaes_instance.xmean + cmaes_instance.sigma * cmaes_instance.B @ (cmaes_instance.D * np.random.randn(cmaes_instance.n, 1))
+
+def draw_mutants(cmaes_instance):
+    """
+    Draws mutants from a Gaussian distribution and scatters them across MPI processes.
+    """
+    if cmaes_instance.rank == 0:
+        generate_mutants(cmaes_instance)
+        repair_and_redraw_mutants(cmaes_instance)
+        scatter_mutants(cmaes_instance)
+    else:
+        receive_mutants(cmaes_instance)
+    
+    cmaes_instance.scattered_mutants = cmaes_instance.mutant_slice
+    cmaes_instance.counteval += cmaes_instance.lmbda
+
+def repair_and_redraw_mutants(cmaes_instance):
+    """
+    Applies repair methods and redraws to all mutants, parameter by parameter.
+    """
+    bounds = [0, 10]  # Define the hardcoded bounds
+    redraw_counter = 0
+    for param_idx in range(cmaes_instance.n):
+        param_values = cmaes_instance.mutants[param_idx, :]
+        if array_in_bounds(param_values, bounds[0], bounds[1]):
+            continue
+        if cmaes_instance._parameters[param_idx].repair is None:
+            cmaes_instance.mutants[param_idx, :], was_redrawn = redraw_param_until_valid(cmaes_instance, param_values, bounds)
+            if was_redrawn:
+                redraw_counter += 1
+            print(f'Redrawn {redraw_counter} out-of-bounds mutants for parameter {cmaes_instance._parameters[param_idx].name}')
+        else:
+            cmaes_instance.mutants[param_idx, :] = apply_repair_to_param(cmaes_instance, param_values, bounds, param_idx)
+
+def redraw_param_until_valid(cmaes_instance, param_values, bounds):
+    """
+    Redraws the out-of-bounds values of a parameter array until they are within bounds.
+    """
+    was_redrawn = False
+    for i in range(len(param_values)):
+        while not in_bounds(param_values[i], bounds[0], bounds[1]):
+            param_values[i] = np.random.randn()
+            was_redrawn = True
+    return param_values, was_redrawn
+
+def apply_repair_to_param(cmaes_instance, param_values, bounds, param_idx):
+    """
+    Applies a repair method to the full array of parameter values if defined.
+    """
+    param = cmaes_instance._parameters[param_idx]
+    printed_repair = False
+    while not array_in_bounds(param_values, bounds[0], bounds[1]):
+        if cmaes_instance.verbose_level >= 0 and not printed_repair:
+            print(f'Repairing parameter {param.name} using method {param.repair}')
+            printed_repair = True
+        Repair(param.repair, param_values, cmaes_instance.xmean[param_idx])
+    return param_values
+
+def scatter_mutants(cmaes_instance):
+    """
+    Splits and scatters the mutants across processes.
+    """
+    cmaes_instance.mutant_lists = np.array_split(cmaes_instance.mutants, cmaes_instance.size, axis=1)
+    cmaes_instance.mutant_slice = cmaes_instance.comm.scatter(cmaes_instance.mutant_lists, root=0)
+
+def receive_mutants(cmaes_instance):
+    """
+    Receives scattered mutants on non-root processes.
+    """
+    cmaes_instance.mutant_slice = cmaes_instance.comm.scatter(None, root=0)
