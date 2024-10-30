@@ -1,4 +1,51 @@
 import numpy as np
+from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
+from mtuq.misfit import Misfit, PolarityMisfit
+from mtuq.dataset import Dataset
+from mtuq.process_data import ProcessData
+from mtuq.greens_tensor.base import GreensTensorList
+
+def validate_inputs(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, wavelet, plot_interval, iter_count):
+    """
+    Centralized input validation for the CMA-ES algorithm.
+    Raises ValueError if any of the input parameters are invalid.
+    """
+    if not isinstance(data_list, list):
+        if isinstance(data_list, Dataset):
+            data_list = [data_list]
+        else:
+            raise ValueError('`data_list` should be a list of mtuq Dataset or an array containing polarities.')
+
+    if not isinstance(stations, list):
+        raise ValueError('`stations` should be a list of mtuq Station objects.')
+
+    if not isinstance(misfit_list, list):
+        if isinstance(misfit_list, (PolarityMisfit, Misfit)):
+            misfit_list = [misfit_list]
+        else:
+            raise ValueError('`misfit_list` should be a list of mtuq Misfit objects.')
+
+    if not isinstance(process_list, list):
+        if isinstance(process_list, ProcessData):
+            process_list = [process_list]
+        else:
+            raise ValueError('`process_list` should be a list of mtuq ProcessData objects.')
+
+    if not isinstance(db_or_greens_list, list):
+        if isinstance(db_or_greens_list, (AxiSEM_Client, GreensTensorList)):
+            db_or_greens_list = [db_or_greens_list]
+        else:
+            raise ValueError('`db_or_greens_list` should be a list of mtuq AxiSEM_Client or GreensTensorList objects.')
+
+    if any(isinstance(db, AxiSEM_Client) for db in db_or_greens_list) and wavelet is None:
+        raise ValueError('wavelet must be specified if database is an AxiSEM_Client')
+
+    if not isinstance(max_iter, int) or not isinstance(plot_interval, int):
+        raise ValueError('`max_iter` and `plot_interval` should be integers.')
+
+    if iter_count is not None and not isinstance(iter_count, int):
+        raise ValueError('`iter_count` should be an integer or None.')
+
 
 def linear_transform(i, a, b):
     """ 
