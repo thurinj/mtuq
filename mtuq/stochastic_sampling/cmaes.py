@@ -6,8 +6,6 @@ from mpi4py import MPI
 from mtuq import MTUQDataFrame
 from mtuq.dataset import Dataset
 from mtuq.event import Origin
-from mtuq.graphics import plot_combined, plot_misfit_force
-from mtuq.graphics.uq._matplotlib import _plot_force_matplotlib
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 from mtuq.greens_tensor.base import GreensTensorList
 from mtuq.misfit import Misfit, PolarityMisfit, WaveformMisfit
@@ -471,7 +469,7 @@ class CMA_ES(object):
         self.best_misfit = self.comm.bcast(self.best_misfit, root=0)
         self.best_solution = self.comm.bcast(self.best_solution, root=0)
         if self.ipop:
-            self.no_improve_counter = self.comm.bcast(self.no_improve_counter, root=0)
+            self.no_improve_counter = self.comm.bcast(self.no_improve_counter, root=0)  
 
         self._misfit_holder *= 0
 
