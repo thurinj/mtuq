@@ -9,9 +9,29 @@ from mtuq.misfit import Misfit, PolarityMisfit
 from mtuq.io.clients.AxiSEM_NetCDF import Client as AxiSEM_Client
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from mtuq.graphics import plot_combined, plot_misfit_force
+
+def result_plots(cmaes_instance, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration):
+    if (iteration + 1) % plot_interval == 0 or iteration == max_iter - 1 or (cmaes_instance.ipop and cmaes_instance.ipop_terminated):
+        if cmaes_instance.rank == 0:
+            plot_mean_waveforms(cmaes_instance, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration)
+            if cmaes_instance.mode in ['mt', 'mt_dc', 'mt_dev']:
+                print('Plotting results for iteration %d\n' % (iteration + 1 + iter_count))
+                result = cmaes_instance.mutants_logger_list
+
+                # Handling the mean solution
+                V,W = cmaes_instance.return_candidate_solution()[0][1:3]
+
+                # If mode is mt, mt_dev or mt_dc, plot the misfit map
+            if cmaes_instance.mode in ['mt', 'mt_dev', 'mt_dc']:
+                plot_combined(cmaes_instance.event_id + '_combined_misfit_map.png', result, colormap='viridis', best_vw=(V, W))
+            elif cmaes_instance.mode == 'force':
+                print('Plotting results for iteration %d\n' % (iteration + 1 +iter_count))
+                result = cmaes_instance.mutants_logger_list
+                plot_misfit_force(cmaes_instance.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=cmaes_instance.return_candidate_solution()[0][1::])
 
 
-def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration):
+def plot_mean_waveforms(cmaes_instance, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration):
     """
     Plots the mean waveforms using the base mtuq waveform plots (mtuq.graphics.waveforms).
 
@@ -52,10 +72,10 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
         If the mode is not 'mt', 'mt_dev', 'mt_dc', or 'force'.
     """
 
-    if CMA.rank != 0:
+    if cmaes_instance.rank != 0:
         return  # Exit early if not rank 0
 
-    mean_solution, final_origin = CMA.return_candidate_solution()
+    mean_solution, final_origin = cmaes_instance.return_candidate_solution()
 
     # Solution grid will change depending on the mode (mt, mt_dev, mt_dc, or force)
     modes = {
@@ -65,24 +85,24 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
         'force': ('F0', 'phi', 'h'),
     }
 
-    if CMA.mode not in modes:
+    if cmaes_instance.mode not in modes:
         raise ValueError('Invalid mode. Supported modes for the plotting functions in the Solve method: "mt", "mt_dev", "mt_dc", "force"')
 
-    mode_dimensions = modes[CMA.mode]
+    mode_dimensions = modes[cmaes_instance.mode]
 
     # Pad mean_solution based on moment tensor mode (deviatoric or double couple)
-    if CMA.mode == 'mt_dev':
+    if cmaes_instance.mode == 'mt_dev':
         mean_solution = np.insert(mean_solution, 2, 0, axis=0)
-    elif CMA.mode == 'mt_dc':
+    elif cmaes_instance.mode == 'mt_dc':
         mean_solution = np.insert(mean_solution, 1, 0, axis=0)
         mean_solution = np.insert(mean_solution, 2, 0, axis=0)
 
-    solution_grid = UnstructuredGrid(dims=mode_dimensions, coords=mean_solution, callback=CMA.callback)
+    solution_grid = UnstructuredGrid(dims=mode_dimensions, coords=mean_solution, callback=cmaes_instance.callback)
 
     final_origin = final_origin[0]
-    if CMA.mode.startswith('mt'):
+    if cmaes_instance.mode.startswith('mt'):
         best_source = MomentTensor(solution_grid.get(0))
-    elif CMA.mode == 'force':
+    elif cmaes_instance.mode == 'force':
         best_source = Force(solution_grid.get(0))
 
     lune_dict = solution_grid.get_dict(0)
@@ -114,7 +134,7 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
             del greens[i]
 
     # Include the restart information in the filename _iteration_restart
-    name_string = CMA.event_id + '_waveforms_mean_restart_' + str(CMA.current_restarts) + '_' + str(iteration + 1) if CMA.ipop == True else CMA.event_id + '_waveforms_mean_' + str(iteration + 1)
+    name_string = cmaes_instance.event_id + '_waveforms_mean_restart_' + str(cmaes_instance.current_restarts) + '_' + str(iteration + 1) if cmaes_instance.ipop == True else cmaes_instance.event_id + '_waveforms_mean_' + str(iteration + 1)
 
     # Plot based on the number of ProcessData objects in the process_list
     if len(process) == 2:
@@ -126,13 +146,13 @@ def plot_mean_waveforms(CMA, data_list, process_list, misfit_list, stations, db_
                             data[0], greens[0], process[0], misfit[0], stations, final_origin, best_source, lune_dict)
 
 
-def _cmaes_scatter_plot(CMA):
+def _cmaes_scatter_plot(cmaes_instance):
     """
     Generates a scatter plot of the mutants and the current mean solution
     
     Parameters
     ----------
-    CMA : CMA_ES    
+    cmaes_instance : CMA_ES    
         The CMA_ES object containing the necessary information for plotting.
 
     Returns
@@ -140,65 +160,65 @@ def _cmaes_scatter_plot(CMA):
     matplotlib.figure.Figure
         The figure object for the plot.
     """
-    if CMA.rank == 0:
+    if cmaes_instance.rank == 0:
         # Check if mode is mt, mt_dev or mt_dc or force
-        if CMA.mode in ['mt', 'mt_dev', 'mt_dc']:
-            if CMA.fig is None:
-                CMA.fig, CMA.ax = _generate_lune()
+        if cmaes_instance.mode in ['mt', 'mt_dev', 'mt_dc']:
+            if cmaes_instance.fig is None:
+                cmaes_instance.fig, cmaes_instance.ax = _generate_lune()
 
-            # Define v as by values from CMA.mutants_logger_list if it exists, otherwise pad with values of zeroes
-            m = np.asarray(CMA.mutants_logger_list['misfit'])
+            # Define v as by values from cmaes_instance.mutants_logger_list if it exists, otherwise pad with values of zeroes
+            m = np.asarray(cmaes_instance.mutants_logger_list['misfit'])
             sorted_indices = np.argsort(m)[::-1]
 
-            if 'v' in CMA.mutants_logger_list:
-                v = np.asarray(CMA.mutants_logger_list['v'])
+            if 'v' in cmaes_instance.mutants_logger_list:
+                v = np.asarray(cmaes_instance.mutants_logger_list['v'])
             else:
                 v = np.zeros_like(m)
 
-            if 'w' in CMA.mutants_logger_list:
-                w = np.asarray(CMA.mutants_logger_list['w'])
+            if 'w' in cmaes_instance.mutants_logger_list:
+                w = np.asarray(cmaes_instance.mutants_logger_list['w'])
             else:
                 w = np.zeros_like(m)
 
             # Handling the mean solutions
-            V, W = CMA.mean_logger_list['v'], CMA.mean_logger_list['w']
-            if CMA.ipop:
-                restart = CMA.mean_logger_list['restart']
+            V, W = cmaes_instance.mean_logger_list['v'], cmaes_instance.mean_logger_list['w']
+            if cmaes_instance.ipop:
+                restart = cmaes_instance.mean_logger_list['restart']
             else:
                 restart = np.zeros_like(V)
 
             # Projecting the mean solution onto the lune
             V, W = _hammer_projection(to_gamma(V), to_delta(W))
-            CMA.ax.scatter(V, W, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+            cmaes_instance.ax.scatter(V, W, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
             # Projecting the mutants onto the lune
             v, w = _hammer_projection(to_gamma(v), to_delta(w))
 
             vmin, vmax = np.percentile(np.asarray(m), [0, 90])
 
-            CMA.ax.scatter(v[sorted_indices], w[sorted_indices], c=m[sorted_indices], s=3, vmin=vmin, vmax=vmax, zorder=100)
+            cmaes_instance.ax.scatter(v[sorted_indices], w[sorted_indices], c=m[sorted_indices], s=3, vmin=vmin, vmax=vmax, zorder=100)
 
             # Add the mean solution to the plot
 
 
 
-            CMA.fig.canvas.draw()
-            return CMA.fig
+            cmaes_instance.fig.canvas.draw()
+            return cmaes_instance.fig
 
-        elif CMA.mode == 'force':
-            if CMA.fig is None:
-                CMA.fig, CMA.ax = _generate_sphere()
+        elif cmaes_instance.mode == 'force':
+            if cmaes_instance.fig is None:
+                cmaes_instance.fig, cmaes_instance.ax = _generate_sphere()
 
             # phi and h will always be present in the mutants_logger_list
-            m = np.asarray(CMA.mutants_logger_list['misfit'])
-            phi, h = np.asarray(CMA.mutants_logger_list['phi']), np.asarray(CMA.mutants_logger_list['h'])
+            m = np.asarray(cmaes_instance.mutants_logger_list['misfit'])
+            phi, h = np.asarray(cmaes_instance.mutants_logger_list['phi']), np.asarray(cmaes_instance.mutants_logger_list['h'])
             latitude = np.degrees(np.pi / 2 - np.arccos(h))
             longitude = wrap_180(phi + 90)
             # Getting mean solution
-            PHI, H = CMA.mean_logger_list['phi'], CMA.mean_logger_list['h']
+            PHI, H = cmaes_instance.mean_logger_list['phi'], cmaes_instance.mean_logger_list['h']
             LATITUDE = np.asarray(np.degrees(np.pi / 2 - np.arccos(H)))
             LONGITUDE = wrap_180(np.asarray(PHI + 90))
-            if CMA.ipop:
-                restart = CMA.mean_logger_list['restart']
+            if cmaes_instance.ipop:
+                restart = cmaes_instance.mean_logger_list['restart']
             else:
                 restart = np.zeros_like(LATITUDE)
 
@@ -209,22 +229,22 @@ def _cmaes_scatter_plot(CMA):
 
             vmin, vmax = np.percentile(np.asarray(m), [0, 90])
 
-            CMA.ax.scatter(longitude, latitude, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100, cmap='Greys_r')
-            CMA.ax.scatter(LONGITUDE, LATITUDE, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
+            cmaes_instance.ax.scatter(longitude, latitude, c=m, s=3, vmin=vmin, vmax=vmax, zorder=100, cmap='Greys_r')
+            cmaes_instance.ax.scatter(LONGITUDE, LATITUDE, c=restart, marker='x', zorder=10000, cmap='tab10', s=6)
 
-            CMA.fig.tight_layout()
+            cmaes_instance.fig.tight_layout()
 
-            return CMA.fig
+            return cmaes_instance.fig
         
 
 
-def _cmaes_scatter_plot_dc(CMA):
+def _cmaes_scatter_plot_dc(cmaes_instance):
     """
     Generates a scatter plot of the mutants and the current mean solution on the three DC quadrants
     
     Parameters
     ----------
-    CMA : CMA_ES    
+    cmaes_instance : CMA_ES    
         The CMA_ES object containing the necessary information for plotting.
 
     Returns
@@ -232,23 +252,23 @@ def _cmaes_scatter_plot_dc(CMA):
     matplotlib.figure.Figure
         The figure object for the plot.
     """
-    if CMA.rank == 0:
-        # Define v as by values from CMA.mutants_logger_list if it exists, otherwise pad with values of zeroes
-        m = np.asarray(CMA.mutants_logger_list['misfit'])
+    if cmaes_instance.rank == 0:
+        # Define v as by values from cmaes_instance.mutants_logger_list if it exists, otherwise pad with values of zeroes
+        m = np.asarray(cmaes_instance.mutants_logger_list['misfit'])
         sorted_indices = np.argsort(m)[::-1]
 
-        kappa = np.asarray(CMA.mutants_logger_list['kappa'])
-        sigma = np.asarray(CMA.mutants_logger_list['sigma'])
-        h = np.asarray(CMA.mutants_logger_list['h'])
+        kappa = np.asarray(cmaes_instance.mutants_logger_list['kappa'])
+        sigma = np.asarray(cmaes_instance.mutants_logger_list['sigma'])
+        h = np.asarray(cmaes_instance.mutants_logger_list['h'])
         # omega = np.rad2deg(np.arccos(h))
         omega = h
 
         # Handling the mean solutions
-        KAPPA, SIGMA, H = CMA.mean_logger_list['kappa'], CMA.mean_logger_list['sigma'], CMA.mean_logger_list['h']
+        KAPPA, SIGMA, H = cmaes_instance.mean_logger_list['kappa'], cmaes_instance.mean_logger_list['sigma'], cmaes_instance.mean_logger_list['h']
         # OMEGA = np.rad2deg(np.arccos(H))
         OMEGA = H
-        if CMA.ipop:
-            restart = CMA.mean_logger_list['restart']
+        if cmaes_instance.ipop:
+            restart = cmaes_instance.mean_logger_list['restart']
         else:
             restart = np.zeros_like(KAPPA)
 

@@ -27,7 +27,7 @@ from mtuq.stochastic_sampling.cmaes_mutants import (
     transform_mutants,
     generate_sources,
 )
-from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms
+from mtuq.stochastic_sampling.cmaes_plotting import result_plots
 from mtuq.stochastic_sampling.cmaes_utils import (
     linear_transform,
     logarithmic_transform,
@@ -960,11 +960,11 @@ class CMA_ES(object):
                     break
 
 
-            self._iteration_plots(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
+            result_plots(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
             
             iteration += 1
         # Trigger a final plotting at the end of the optimization
-        self._iteration_plots(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
+        result_plots(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
 
     def _get_greens_tensors_key(self, process):
         """
@@ -1098,22 +1098,3 @@ class CMA_ES(object):
                 components = list(''.join(misfit.time_shift_groups))
             
             return calculate_norm_data(data, misfit.norm, components)
-
-    def _iteration_plots(self, data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration):
-        if (iteration + 1) % plot_interval == 0 or iteration == max_iter - 1 or (self.ipop and self.ipop_terminated):
-            if self.rank == 0:
-                plot_mean_waveforms(self, data_list, process_list, misfit_list, stations, db_or_greens_list, iteration)
-                if self.mode in ['mt', 'mt_dc', 'mt_dev']:
-                    print('Plotting results for iteration %d\n' % (iteration + 1 + iter_count))
-                    result = self.mutants_logger_list
-
-                    # Handling the mean solution
-                    V,W = self.return_candidate_solution()[0][1:3]
-
-                    # If mode is mt, mt_dev or mt_dc, plot the misfit map
-                if self.mode in ['mt', 'mt_dev', 'mt_dc']:
-                    plot_combined(self.event_id + '_combined_misfit_map.png', result, colormap='viridis', best_vw=(V, W))
-                elif self.mode == 'force':
-                    print('Plotting results for iteration %d\n' % (iteration + 1 +iter_count))
-                    result = self.mutants_logger_list
-                    plot_misfit_force(self.event_id + '_misfit_map.png', result, colormap='viridis', backend=_plot_force_matplotlib, plot_type='colormesh', best_force=self.return_candidate_solution()[0][1::])
