@@ -469,7 +469,9 @@ class CMA_ES(object):
 
         # Broadcast the updated variables to all ranks
         self.best_misfit = self.comm.bcast(self.best_misfit, root=0)
-        self.no_improve_counter = self.comm.bcast(self.no_improve_counter, root=0)
+        self.best_solution = self.comm.bcast(self.best_solution, root=0)
+        if self.ipop:
+            self.no_improve_counter = self.comm.bcast(self.no_improve_counter, root=0)
 
         self._misfit_holder *= 0
 
