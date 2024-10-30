@@ -1,5 +1,7 @@
 import numpy as np
+import pandas as pd
 from mtuq.stochastic_sampling.cmaes_utils import array_in_bounds, in_bounds, Repair
+
 
 def generate_mutants(cmaes_instance):
     """
@@ -83,3 +85,46 @@ def receive_mutants(cmaes_instance):
     Receives scattered mutants on non-root processes.
     """
     cmaes_instance.mutant_slice = cmaes_instance.comm.scatter(None, root=0)
+
+def gather_mutants(cmaes_instance):
+    """
+    Gathers mutants from all processes into the root process. It also uses the datalogger to construct the mutants_logger_list.
+
+    Attributes
+    ----------
+    cmaes_instance.mutants : array
+        The gathered and concatenated mutants. This attribute is set to None for non-root processes after gathering.
+    cmaes_instance.transformed_mutants : array
+        The gathered and concatenated transformed mutants. This attribute is set to None for non-root processes after gathering.
+    cmaes_instance.mutants_logger_list : list
+        The list to which the datalogger is appended.
+    """
+    # Printing the mutants on each process, their shapes and types for debugging purposes
+    if cmaes_instance.verbose_level >= 2:
+        print(cmaes_instance.scattered_mutants, '\n', 'shape is', np.shape(cmaes_instance.scattered_mutants), '\n', 'type is', type(cmaes_instance.scattered_mutants))
+
+    cmaes_instance.mutants = cmaes_instance.comm.gather(cmaes_instance.scattered_mutants, root=0)
+    if cmaes_instance.rank == 0:
+        cmaes_instance.mutants = np.concatenate(cmaes_instance.mutants, axis=1)
+        if cmaes_instance.verbose_level >= 2:
+            print(cmaes_instance.mutants, '\n', 'shape is', np.shape(cmaes_instance.mutants), '\n', 'type is', type(cmaes_instance.mutants))  # DEBUG PRINT
+    else:
+        cmaes_instance.mutants = None
+
+    cmaes_instance.transformed_mutants = cmaes_instance.comm.gather(cmaes_instance.transformed_mutants, root=0)
+    if cmaes_instance.rank == 0:
+        cmaes_instance.transformed_mutants = np.concatenate(cmaes_instance.transformed_mutants, axis=1)
+        if cmaes_instance.verbose_level >= 2:
+            print(cmaes_instance.transformed_mutants, '\n', 'shape is', np.shape(cmaes_instance.transformed_mutants), '\n', 'type is', type(cmaes_instance.transformed_mutants))  # DEBUG PRINT
+    else:
+        cmaes_instance.transformed_mutants = None
+
+    if cmaes_instance.comm.rank == 0:
+        current_df = cmaes_instance._datalogger(mean=False)
+    # Log the mutants from _datalogger object
+    # If cmaes_instance.mutants_logger_list is empty, initialize it with the current DataFrame
+        if cmaes_instance.mutants_logger_list.empty:
+            cmaes_instance.mutants_logger_list = current_df
+        else:
+            # Concatenate the current DataFrame to the logger list
+            cmaes_instance.mutants_logger_list = pd.concat([cmaes_instance.mutants_logger_list, current_df], ignore_index=True)

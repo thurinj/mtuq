@@ -23,21 +23,12 @@ from mtuq.stochastic_sampling.cmaes_init import (
 )
 from mtuq.stochastic_sampling.cmaes_mutants import (
     draw_mutants,
-    draw_single_mutant,
-    generate_mutants,
-    repair_and_redraw_mutants,
-    redraw_param_until_valid,
-    apply_repair_to_param,
-    scatter_mutants,
-    receive_mutants,
+    gather_mutants,
 )
 from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms
 from mtuq.stochastic_sampling.cmaes_utils import (
-    Repair,
     linear_transform,
     logarithmic_transform,
-    in_bounds,
-    array_in_bounds,
     inverse_linear_transform,
 )
 
@@ -144,40 +135,12 @@ class CMA_ES(object):
     -------
     __init__(self, parameters_list, origin, lmbda=None, callback_function=None, event_id='', verbose_level=0)
         Initializes the CMA-ES class with the given parameters.
-    _initialize_mpi_communicator(self)
-        Initializes the MPI communicator and sets the process rank and size.
-    _initialize_logging(self, event_id, verbose_level)
-        Sets up logging properties like event_id and verbosity level.
-    _initialize_parameters(self, parameters_list, lmbda, origin, callback_function)
-        Initializes the parameters for the CMA-ES algorithm.
-    _set_default_callback(self)
-        Sets the default callback function based on the parameter names.
-    _setup_caches(self)
-        Initializes pandas DataFrames for logging. Used for post-processing and plotting.
-    draw_mutants(self)
-        Draws mutants from a Gaussian distribution and scatters them across MPI processes.
-    _generate_mutants(self)
-        Generates all `self.lmbda` mutants from a Gaussian distribution.
-    _draw_single_mutant(self)
-        Draws a single mutant from the Gaussian distribution.
-    _repair_and_redraw_mutants(self)
-        Applies repair methods and redraws to all mutants, parameter by parameter.
-    _redraw_param_until_valid(self, param_values, bounds)
-        Redraws the out-of-bounds values of a parameter array until they are within bounds.
-    _apply_repair_to_param(self, param_values, bounds, param_idx)
-        Applies a repair method to the full array of parameter values if defined.
-    _scatter_mutants(self)
-        Splits and scatters the mutants across processes.
-    _receive_mutants(self)
-        Receives scattered mutants on non-root processes.
     eval_fitness(self, data, stations, misfit, db_or_greens_list, process=None, wavelet=None, verbose=False)
         Evaluates the misfit for each mutant of the population.
     _eval_fitness_db(self, data, stations, misfit, db_or_greens_list, process, wavelet)
         Helper function to evaluate fitness for 'db' mode.
     _eval_fitness_greens(self, data, stations, misfit, db_or_greens_list)
         Helper function to evaluate fitness for 'greens' mode.
-    gather_mutants(self, verbose=False)
-        Gathers mutants from all processes into the root process.
     fitness_sort(self, misfit)
         Sorts the mutants by fitness and updates the misfit_holder.
     update_step_size(self)
@@ -467,54 +430,6 @@ class CMA_ES(object):
             if self.rank == 0:
                 print('WARNING: Greens mode is not compatible with latitude, longitude or depth parameters. Consider using a local Axisem database instead.')
             return None
-
-    def gather_mutants(self, verbose=False):
-        """
-        Gathers mutants from all processes into the root process. It also uses the datalogger to construct the mutants_logger_list.
-
-        Parameters
-        ----------
-        verbose : bool, optional
-            If set to True, prints the concatenated mutants, their shapes, and types. Default is False.
-
-        Attributes
-        ----------
-        self.mutants : array
-            The gathered and concatenated mutants. This attribute is set to None for non-root processes after gathering.
-        self.transformed_mutants : array
-            The gathered and concatenated transformed mutants. This attribute is set to None for non-root processes after gathering.
-        self.mutants_logger_list : list
-            The list to which the datalogger is appended.
-        """
-        # Printing the mutants on each process, their shapes and types for debugging purposes
-        if self.verbose_level >= 2:
-            print(self.scattered_mutants, '\n', 'shape is', np.shape(self.scattered_mutants), '\n', 'type is', type(self.scattered_mutants))
-
-        self.mutants = self.comm.gather(self.scattered_mutants, root=0)
-        if self.rank == 0:
-            self.mutants = np.concatenate(self.mutants, axis=1)
-            if self.verbose_level >= 2:
-                print(self.mutants, '\n', 'shape is', np.shape(self.mutants), '\n', 'type is', type(self.mutants))  # DEBUG PRINT
-        else:
-            self.mutants = None
-
-        self.transformed_mutants = self.comm.gather(self.transformed_mutants, root=0)
-        if self.rank == 0:
-            self.transformed_mutants = np.concatenate(self.transformed_mutants, axis=1)
-            if self.verbose_level >= 2:
-                print(self.transformed_mutants, '\n', 'shape is', np.shape(self.transformed_mutants), '\n', 'type is', type(self.transformed_mutants))  # DEBUG PRINT
-        else:
-            self.transformed_mutants = None
-
-        if self.comm.rank == 0:
-            current_df = self._datalogger(mean=False)
-        # Log the mutants from _datalogger object
-        # If self.mutants_logger_list is empty, initialize it with the current DataFrame
-            if self.mutants_logger_list.empty:
-                self.mutants_logger_list = current_df
-            else:
-                # Concatenate the current DataFrame to the logger list
-                self.mutants_logger_list = pd.concat([self.mutants_logger_list, current_df], ignore_index=True)
 
     def fitness_sort(self, misfit):
         """
@@ -1016,7 +931,7 @@ class CMA_ES(object):
             weighted_misfits = [w * m for w, m in zip(misfit_weights, misfits)]
             total_missfit = sum(weighted_misfits)
             self._misfit_holder += total_missfit
-            self.gather_mutants()
+            gather_mutants(self)
             self.fitness_sort(total_missfit)
             self.update_mean()
             self.update_step_size()

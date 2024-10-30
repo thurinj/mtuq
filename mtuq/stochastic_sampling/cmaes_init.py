@@ -4,22 +4,22 @@ import pandas as pd
 from mtuq.event import Origin
 from mtuq.util.math import to_mij, to_rtp
 
-def _initialize_mpi_communicator(self):
+def _initialize_mpi_communicator(cmaes_instance):
     """Initializes the MPI communicator and sets the process rank and size."""
-    self.rank = 0
-    self.size = 1
-    self.comm = MPI.COMM_WORLD
-    self.rank = self.comm.Get_rank()
-    self.size = self.comm.Get_size()
+    cmaes_instance.rank = 0
+    cmaes_instance.size = 1
+    cmaes_instance.comm = MPI.COMM_WORLD
+    cmaes_instance.rank = cmaes_instance.comm.Get_rank()
+    cmaes_instance.size = cmaes_instance.comm.Get_size()
 
-def _initialize_logging(self, event_id, verbose_level):
+def _initialize_logging(cmaes_instance, event_id, verbose_level):
     """Sets up logging properties like event_id and verbosity level."""
-    self.event_id = event_id
-    self.verbose_level = verbose_level
-    if self.rank == 0:
-        print(f'Initializing CMA-ES inversion for event {self.event_id}')
+    cmaes_instance.event_id = event_id
+    cmaes_instance.verbose_level = verbose_level
+    if cmaes_instance.rank == 0:
+        print(f'Initializing CMA-ES inversion for event {cmaes_instance.event_id}')
 
-def _initialize_parameters(self, parameters_list, lmbda, origin, callback_function):
+def _initialize_parameters(cmaes_instance, parameters_list, lmbda, origin, callback_function):
     """
     Initializes the parameters for the CMA-ES algorithm, including population size, callback function,
     and variables related to step-size control and covariance matrix adaptation.
@@ -35,71 +35,71 @@ def _initialize_parameters(self, parameters_list, lmbda, origin, callback_functi
     callback_function : function, optional
         The callback function used for the inversion.
     """
-    self._parameters = parameters_list
-    self._parameters_names = [parameter.name for parameter in parameters_list]
-    self.n = len(self._parameters)
+    cmaes_instance._parameters = parameters_list
+    cmaes_instance._parameters_names = [parameter.name for parameter in parameters_list]
+    cmaes_instance.n = len(cmaes_instance._parameters)
 
     # Set the default number of mutants (lambda) if not specified
     if lmbda is None:
-        self.lmbda = int(4 + np.floor(3 * np.log(self.n)))
+        cmaes_instance.lmbda = int(4 + np.floor(3 * np.log(cmaes_instance.n)))
     else:
-        self.lmbda = lmbda
+        cmaes_instance.lmbda = lmbda
 
     # Initialize the misfit holder which will store the misfit values for each mutant for a given iteration
-    self._misfit_holder = np.zeros((int(self.lmbda), 1))
+    cmaes_instance._misfit_holder = np.zeros((int(cmaes_instance.lmbda), 1))
 
     # Ensure that the number of MPI processes is not greater than the population size
-    if self.size > self.lmbda:
-        raise ValueError(f'Number of MPI processes ({self.size}) exceeds population size ({self.lmbda})')
+    if cmaes_instance.size > cmaes_instance.lmbda:
+        raise ValueError(f'Number of MPI processes ({cmaes_instance.size}) exceeds population size ({cmaes_instance.lmbda})')
 
     # Validate the origin parameter
     if not isinstance(origin, Origin):
         raise ValueError('The "origin" parameter must be an instance of mtuq.event.Origin. Please provide a valid object to be used as catalog origin.')
 
     # Set the origin for the inversion
-    self.catalog_origin = origin
+    cmaes_instance.catalog_origin = origin
 
     # Handle callback function initialization
-    self.callback = callback_function
-    if self.callback is None:
-        _set_default_callback(self)
+    cmaes_instance.callback = callback_function
+    if cmaes_instance.callback is None:
+        _set_default_callback(cmaes_instance)
 
     # Initialize parameters tied to the CMA-ES algorithm
-    self.xmean = np.asarray([[param.initial for param in self._parameters]]).T
-    self.sigma = 1.67  # Default initial Gaussian variance for all parameters
-    self.iteration = 0
-    self.counteval = 0
-    self._greens_tensors_cache = {}
+    cmaes_instance.xmean = np.asarray([[param.initial for param in cmaes_instance._parameters]]).T
+    cmaes_instance.sigma = 1.67  # Default initial Gaussian variance for all parameters
+    cmaes_instance.iteration = 0
+    cmaes_instance.counteval = 0
+    cmaes_instance._greens_tensors_cache = {}
 
     # Weight initialization for recombination
-    self.mu = np.floor(self.lmbda / 2)
+    cmaes_instance.mu = np.floor(cmaes_instance.lmbda / 2)
     a = 1  # Use 1/2 in tutorial and 1 in publication
-    self.weights = np.array([np.log(self.mu + a) - np.log(np.arange(1, self.mu + 1))]).T
-    self.weights /= sum(self.weights)
-    self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+    cmaes_instance.weights = np.array([np.log(cmaes_instance.mu + a) - np.log(np.arange(1, cmaes_instance.mu + 1))]).T
+    cmaes_instance.weights /= sum(cmaes_instance.weights)
+    cmaes_instance.mueff = sum(cmaes_instance.weights)**2 / sum(cmaes_instance.weights**2)
 
     # Step-size control parameters
-    self.cs = (self.mueff + 2) / (self.n + self.mueff + 5)
-    self.damps = 1 + 2 * max(0, np.sqrt((self.mueff - 1) / (self.n + 1)) - 1) + self.cs
+    cmaes_instance.cs = (cmaes_instance.mueff + 2) / (cmaes_instance.n + cmaes_instance.mueff + 5)
+    cmaes_instance.damps = 1 + 2 * max(0, np.sqrt((cmaes_instance.mueff - 1) / (cmaes_instance.n + 1)) - 1) + cmaes_instance.cs
 
     # Covariance matrix adaptation parameters
-    self.cc = (4 + self.mueff / self.n) / (self.n + 4 + 2 * self.mueff / self.n)
-    self.acov = 2
-    self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
-    self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov * self.mueff / 2))
+    cmaes_instance.cc = (4 + cmaes_instance.mueff / cmaes_instance.n) / (cmaes_instance.n + 4 + 2 * cmaes_instance.mueff / cmaes_instance.n)
+    cmaes_instance.acov = 2
+    cmaes_instance.c1 = cmaes_instance.acov / ((cmaes_instance.n + 1.3)**2 + cmaes_instance.mueff)
+    cmaes_instance.cmu = min(1 - cmaes_instance.c1, cmaes_instance.acov * (cmaes_instance.mueff - 2 + 1 / cmaes_instance.mueff) / ((cmaes_instance.n + 2)**2 + cmaes_instance.acov * cmaes_instance.mueff / 2))
 
     # Initialize step-size and covariance-related variables
-    self.ps = np.zeros_like(self.xmean)
-    self.pc = np.zeros_like(self.xmean)
-    self.B = np.eye(self.n, self.n)
-    self.D = np.ones((self.n, 1))
-    self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
-    self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
-    self.eigeneval = 0
-    self.chin = self.n**0.5 * (1 - 1 / (4 * self.n) + 1 / (21 * self.n**2))
-    self.mutants = np.zeros((self.n, self.lmbda))
+    cmaes_instance.ps = np.zeros_like(cmaes_instance.xmean)
+    cmaes_instance.pc = np.zeros_like(cmaes_instance.xmean)
+    cmaes_instance.B = np.eye(cmaes_instance.n, cmaes_instance.n)
+    cmaes_instance.D = np.ones((cmaes_instance.n, 1))
+    cmaes_instance.C = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**2) @ cmaes_instance.B.T
+    cmaes_instance.invsqrtC = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**-1) @ cmaes_instance.B.T
+    cmaes_instance.eigeneval = 0
+    cmaes_instance.chin = cmaes_instance.n**0.5 * (1 - 1 / (4 * cmaes_instance.n) + 1 / (21 * cmaes_instance.n**2))
+    cmaes_instance.mutants = np.zeros((cmaes_instance.n, cmaes_instance.lmbda))
 
-def _initialize_ipop(self, max_restarts: int = 10, lambda_increase_factor: float = 2.0, patience: int = 20):
+def _initialize_ipop(cmaes_instance, max_restarts: int = 10, lambda_increase_factor: float = 2.0, patience: int = 20):
     """
     Initializes the IPOP (Increasing Population) strategy for the CMA-ES algorithm.
 
@@ -112,108 +112,108 @@ def _initialize_ipop(self, max_restarts: int = 10, lambda_increase_factor: float
     patience : int, optional
         Number of iterations to wait without improvement before restarting. Default is 20.
     """
-    self.ipop = True
-    self.ipop_terminated = False
-    self.max_restarts = max_restarts
-    self.lambda_increase_factor = lambda_increase_factor
-    self.patience = patience
-    self.current_restarts = 0
-    self.no_improve_counter = 0
-    self.best_misfit = np.inf
-    self.best_solution = None
-    self.best_origins = None
+    cmaes_instance.ipop = True
+    cmaes_instance.ipop_terminated = False
+    cmaes_instance.max_restarts = max_restarts
+    cmaes_instance.lambda_increase_factor = lambda_increase_factor
+    cmaes_instance.patience = patience
+    cmaes_instance.current_restarts = 0
+    cmaes_instance.no_improve_counter = 0
+    cmaes_instance.best_misfit = np.inf
+    cmaes_instance.best_solution = None
+    cmaes_instance.best_origins = None
 
-    if self.rank == 0:
+    if cmaes_instance.rank == 0:
         print("IPOP strategy initialized with the following parameters:")
-        print(f"  Max Restarts: {self.max_restarts}")
-        print(f"  Lambda Increase Factor: {self.lambda_increase_factor}")
-        print(f"  Patience: {self.patience} iterations without improvement")
+        print(f"  Max Restarts: {cmaes_instance.max_restarts}")
+        print(f"  Lambda Increase Factor: {cmaes_instance.lambda_increase_factor}")
+        print(f"  Patience: {cmaes_instance.patience} iterations without improvement")
 
-def _restart_ipop(self):
+def _restart_ipop(cmaes_instance):
     """
     Handles the restart mechanism for the IPOP strategy by increasing the population size
     and reinitializing CMA-ES parameters.
     """
-    if self.current_restarts >= self.max_restarts:
-        if self.rank == 0:
-            print(f"Maximum number of restarts ({self.max_restarts}) reached. Terminating optimization.")
+    if cmaes_instance.current_restarts >= cmaes_instance.max_restarts:
+        if cmaes_instance.rank == 0:
+            print(f"Maximum number of restarts ({cmaes_instance.max_restarts}) reached. Terminating optimization.")
         raise StopIteration("IPOP-CMA-ES: Maximum restarts reached.")
 
     # Increase population size
-    new_lambda = int(self.lmbda * self.lambda_increase_factor)
-    if self.rank == 0:
+    new_lambda = int(cmaes_instance.lmbda * cmaes_instance.lambda_increase_factor)
+    if cmaes_instance.rank == 0:
         print(f"Restarting CMA-ES with increased population size: {new_lambda}")
 
     # Update lambda
-    self.lmbda = new_lambda
+    cmaes_instance.lmbda = new_lambda
 
-    self._misfit_holder = np.zeros((int(self.lmbda), 1))
+    cmaes_instance._misfit_holder = np.zeros((int(cmaes_instance.lmbda), 1))
 
     # Reinitialize CMA-ES parameters
-    self.iteration = 0
-    # self.counteval = 0
-    self.mutants = np.zeros((self.n, self.lmbda))
+    cmaes_instance.iteration = 0
+    # cmaes_instance.counteval = 0
+    cmaes_instance.mutants = np.zeros((cmaes_instance.n, cmaes_instance.lmbda))
 
     # Reset step-size and covariance-related variables
     restart_from_best = False
     if restart_from_best:
-        self.xmean = np.asarray([self.best_solution.copy()]).T
+        cmaes_instance.xmean = np.asarray([cmaes_instance.best_solution.copy()]).T
     else:
         # restart at random
-        self.xmean = np.random.uniform(0, 10, (self.n, 1))
+        cmaes_instance.xmean = np.random.uniform(0, 10, (cmaes_instance.n, 1))
         
-    self.sigma = 1.67  # You might want to adjust this based on your problem
-    self.B = np.eye(self.n, self.n)
-    self.D = np.ones((self.n, 1))
-    self.C = self.B @ np.diag(self.D[:, 0]**2) @ self.B.T
-    self.invsqrtC = self.B @ np.diag(self.D[:, 0]**-1) @ self.B.T
-    self.ps = np.zeros_like(self.xmean)
-    self.pc = np.zeros_like(self.xmean)
-    self.eigeneval = 0
+    cmaes_instance.sigma = 1.67  # You might want to adjust this based on your problem
+    cmaes_instance.B = np.eye(cmaes_instance.n, cmaes_instance.n)
+    cmaes_instance.D = np.ones((cmaes_instance.n, 1))
+    cmaes_instance.C = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**2) @ cmaes_instance.B.T
+    cmaes_instance.invsqrtC = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**-1) @ cmaes_instance.B.T
+    cmaes_instance.ps = np.zeros_like(cmaes_instance.xmean)
+    cmaes_instance.pc = np.zeros_like(cmaes_instance.xmean)
+    cmaes_instance.eigeneval = 0
 
     # Update weights and related parameters based on new lambda
-    self.mu = np.floor(self.lmbda / 2)
+    cmaes_instance.mu = np.floor(cmaes_instance.lmbda / 2)
     a = 1  # Use 1 in publication
-    self.weights = np.array([np.log(self.mu + a) - np.log(np.arange(1, self.mu + 1))]).T
-    self.weights /= sum(self.weights)
-    self.mueff = sum(self.weights)**2 / sum(self.weights**2)
+    cmaes_instance.weights = np.array([np.log(cmaes_instance.mu + a) - np.log(np.arange(1, cmaes_instance.mu + 1))]).T
+    cmaes_instance.weights /= sum(cmaes_instance.weights)
+    cmaes_instance.mueff = sum(cmaes_instance.weights)**2 / sum(cmaes_instance.weights**2)
 
     # Step-size control parameters
-    self.cs = (self.mueff + 2) / (self.n + self.mueff + 5)
-    self.damps = 1 + 2 * max(0, np.sqrt((self.mueff - 1) / (self.n + 1)) - 1) + self.cs
+    cmaes_instance.cs = (cmaes_instance.mueff + 2) / (cmaes_instance.n + cmaes_instance.mueff + 5)
+    cmaes_instance.damps = 1 + 2 * max(0, np.sqrt((cmaes_instance.mueff - 1) / (cmaes_instance.n + 1)) - 1) + cmaes_instance.cs
 
     # Covariance matrix adaptation parameters
-    self.cc = (4 + self.mueff / self.n) / (self.n + 4 + 2 * self.mueff / self.n)
-    self.acov = 2
-    self.c1 = self.acov / ((self.n + 1.3)**2 + self.mueff)
-    self.cmu = min(1 - self.c1, self.acov * (self.mueff - 2 + 1 / self.mueff) / ((self.n + 2)**2 + self.acov * self.mueff / 2))
+    cmaes_instance.cc = (4 + cmaes_instance.mueff / cmaes_instance.n) / (cmaes_instance.n + 4 + 2 * cmaes_instance.mueff / cmaes_instance.n)
+    cmaes_instance.acov = 2
+    cmaes_instance.c1 = cmaes_instance.acov / ((cmaes_instance.n + 1.3)**2 + cmaes_instance.mueff)
+    cmaes_instance.cmu = min(1 - cmaes_instance.c1, cmaes_instance.acov * (cmaes_instance.mueff - 2 + 1 / cmaes_instance.mueff) / ((cmaes_instance.n + 2)**2 + cmaes_instance.acov * cmaes_instance.mueff / 2))
 
-    self.current_restarts += 1
-    self.no_improve_counter = 0  # Reset patience counter
+    cmaes_instance.current_restarts += 1
+    cmaes_instance.no_improve_counter = 0  # Reset patience counter
 
-def _set_default_callback(self):
+def _set_default_callback(cmaes_instance):
     """Sets the default callback function based on the parameter names."""
-    if 'Mw' in self._parameters_names or 'kappa' in self._parameters_names:
-        self.callback = to_mij
-        self.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
-        self.mode = 'mt'
-        if 'w' not in self._parameters_names and 'v' in self._parameters_names:
-            self.callback = to_mij
-            self.mode = 'mt_dev'
-            self.mij_args = ['rho', 'w', 'kappa', 'sigma', 'h']
-        elif 'v' not in self._parameters_names and 'w' not in self._parameters_names:
-            self.callback = to_mij
-            self.mode = 'mt_dc'
-            self.mij_args = ['rho', 'kappa', 'sigma', 'h']
-    elif 'F0' in self._parameters_names:
-        self.callback = to_rtp
-        self.mode = 'force'
+    if 'Mw' in cmaes_instance._parameters_names or 'kappa' in cmaes_instance._parameters_names:
+        cmaes_instance.callback = to_mij
+        cmaes_instance.mij_args = ['rho', 'v', 'w', 'kappa', 'sigma', 'h']
+        cmaes_instance.mode = 'mt'
+        if 'w' not in cmaes_instance._parameters_names and 'v' in cmaes_instance._parameters_names:
+            cmaes_instance.callback = to_mij
+            cmaes_instance.mode = 'mt_dev'
+            cmaes_instance.mij_args = ['rho', 'w', 'kappa', 'sigma', 'h']
+        elif 'v' not in cmaes_instance._parameters_names and 'w' not in cmaes_instance._parameters_names:
+            cmaes_instance.callback = to_mij
+            cmaes_instance.mode = 'mt_dc'
+            cmaes_instance.mij_args = ['rho', 'kappa', 'sigma', 'h']
+    elif 'F0' in cmaes_instance._parameters_names:
+        cmaes_instance.callback = to_rtp
+        cmaes_instance.mode = 'force'
 
-def _setup_caches(self):
+def _setup_caches(cmaes_instance):
     """Initializes pandas DataFrames for logging. Used for post-processing and plotting."""
-    self.mutants_logger_list = pd.DataFrame()
-    self.mean_logger_list = pd.DataFrame()
+    cmaes_instance.mutants_logger_list = pd.DataFrame()
+    cmaes_instance.mean_logger_list = pd.DataFrame()
 
     # Define holder variables for plotting
-    self.fig = None
-    self.ax = None
+    cmaes_instance.fig = None
+    cmaes_instance.ax = None
