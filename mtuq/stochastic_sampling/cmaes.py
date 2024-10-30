@@ -24,12 +24,15 @@ from mtuq.stochastic_sampling.cmaes_init import (
 from mtuq.stochastic_sampling.cmaes_mutants import (
     draw_mutants,
     gather_mutants,
+    transform_mutants,
+    generate_sources,
 )
 from mtuq.stochastic_sampling.cmaes_plotting import plot_mean_waveforms
 from mtuq.stochastic_sampling.cmaes_utils import (
     linear_transform,
     logarithmic_transform,
     inverse_linear_transform,
+    validate_inputs,
 )
 
 import matplotlib
@@ -247,15 +250,13 @@ class CMA_ES(object):
         numpy.ndarray
             The misfit values for each mutant of the population.
         """
-        # Check if the input parameters are valid
-        self._check_greens_input_combination(db_or_greens_list, process, wavelet)
-
         # Use consistent coding style and formatting
         mode = 'db' if isinstance(db_or_greens_list, AxiSEM_Client) else 'greens'
 
-        self._transform_mutants()
-
-        self._generate_sources()
+        # Transform the mutant from [0, 10] to the correct parameter space bounds
+        transform_mutants(self)
+        # Generate valid sources from the transformed mutants using the callback function
+        generate_sources(self)
 
         if mode == 'db':
             return self._eval_fitness_db(data, stations, misfit, db_or_greens_list, process, wavelet)
@@ -459,16 +460,16 @@ class CMA_ES(object):
                 if misfit.min() < self.best_misfit:
                     self.best_misfit = misfit.min()
                     self.best_solution = self.mutants[:, 0].copy()
-                    # self.best_origins = [self.origins[sorted_indices[0]]]
-
-                    # Reset patience counter
-                    self.no_improve_counter = 0
+                    self.no_improve_counter = 0  # Reset patience counter
                 else:
                     self.no_improve_counter += 1
             else:
                 self.best_misfit = misfit.min()
                 self.best_solution = self.mutants[:, 0].copy()
-                # self.best_origins = [self.origins[sorted_indices[0]]]
+
+        # Broadcast the updated variables to all ranks
+        self.best_misfit = self.comm.bcast(self.best_misfit, root=0)
+        self.no_improve_counter = self.comm.bcast(self.no_improve_counter, root=0)
 
         self._misfit_holder *= 0
 
@@ -887,7 +888,7 @@ class CMA_ES(object):
 
         if self.rank == 0:
             # Check Solve inputs
-            self._check_Solve_inputs(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, wavelet, plot_interval, iter_count)
+            validate_inputs(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, wavelet, plot_interval, iter_count)
 
         # Handling of the misfit weights. If not provided, equal weights are used, otherwise the weights are used to derive percentages.
         if misfit_weights is None:
@@ -937,7 +938,6 @@ class CMA_ES(object):
             self.update_step_size()
             self.update_covariance()
 
-            # Check for improvement to decide on restarting
             if self.ipop:
                 # Condition to trigger a restart:
                 # - Either no improvement over 'patience' iterations
@@ -965,88 +965,6 @@ class CMA_ES(object):
             iteration += 1
         # Trigger a final plotting at the end of the optimization
         self._iteration_plots(data_list, stations, misfit_list, process_list, db_or_greens_list, max_iter, plot_interval, iter_count, iteration)
-
-
-
-    def _transform_mutants(self):
-        """
-        Transforms local mutants on each process based on the parameters scaling and projection settings.
-
-        For each parameter, depending on its scaling setting ('linear' or 'log'), 
-        it applies a transformation to the corresponding elements of scattered_mutants.
-        If a projection is specified, it applies this projection to the transformed values.
-
-        Attributes
-        ----------
-        scattered_mutants : np.ndarray
-            A 2D numpy array with the original mutant data. When MPI is used, correspond to the local mutants on each process.
-        _parameters : list
-            A list of Parameter objects, each with attributes 'scaling', 'lower_bound', 'upper_bound', 
-            and 'projection' specifying how to transform the corresponding scattered_mutants.
-
-        Raises
-        ------
-        ValueError
-            If an unrecognized scaling is provided.
-        """
-        self.transformed_mutants = np.zeros_like(self.scattered_mutants)
-        for i, param in enumerate(self._parameters):
-            if param.scaling == 'linear':
-                self.transformed_mutants[i] = linear_transform(self.scattered_mutants[i], param.lower_bound, param.upper_bound)
-            elif param.scaling == 'log':
-                self.transformed_mutants[i] = logarithmic_transform(self.scattered_mutants[i], param.lower_bound, param.upper_bound)
-            else:
-                raise ValueError('Unrecognized scaling, must be linear or log')
-            if param.projection is not None:
-                self.transformed_mutants[i] = np.asarray(list(map(param.projection, self.transformed_mutants[i])))
-
-    def _generate_sources(self):
-        """
-        Generates sources by calling the callback function on transformed data according to the set mode.
-
-        Depending on the mode, the method selects a subset of transformed mutants, possibly extending
-        it with zero-filled columns at specific positions, and then passes the processed data to the
-        callback function. The results are stored in a contiguous NumPy array in self.sources.
-
-        Raises
-        ------
-        ValueError
-            If an unsupported mode is provided.
-
-        Attributes
-        ----------
-        mode : str
-            A string representing the mode of operation, which can be 'mt', 'mt_dev', 'mt_dc', or 'force'.
-        transformed_mutants : np.ndarray
-            A 2D numpy array that contains the transformed data to be processed.
-        callback : callable
-            A callable that is used to process the data.
-        """
-        # Mapping between modes and respective slices or insertion positions for processing.
-        mode_to_indices = {
-            'mt': (0, 6),  # For 'mt', a slice from the first 6 elements of transformed_mutants is used.
-            'mt_dev': (0, 5, 2),  # For 'mt_dev', a zero column is inserted at position 2 after slicing the first 5 elements.
-            'mt_dc': (0, 4, 1, 2),  # For 'mt_dc', zero columns are inserted at positions 1 and 2 after slicing the first 4 elements.
-            'force': (0, 3),  # For 'force', a slice from the first 3 elements of transformed_mutants is used.
-        }
-
-        # Check the mode's validity. Raise an error if the mode is unsupported.
-        if self.mode not in mode_to_indices:
-            raise ValueError(f'Invalid mode: {self.mode}')
-
-        # Get the slice or insertion positions based on the current mode.
-        indices = mode_to_indices[self.mode]
-
-        # If the mode is 'mt' or 'force', take a slice from transformed_mutants and pass it to the callback.
-        if self.mode in ['mt', 'force']:
-            self.sources = np.ascontiguousarray(self.callback(*self.transformed_mutants[indices[0]:indices[1]]))
-        else:
-            # For 'mt_dev' and 'mt_dc' modes, insert zeros at specific positions after slicing transformed_mutants.
-            self.extended_mutants = self.transformed_mutants[indices[0]:indices[1]]
-            for insertion_index in indices[2:]:
-                self.extended_mutants = np.insert(self.extended_mutants, insertion_index, 0, axis=0)
-            # Pass the processed data to the callback, and save the result as a contiguous array in self.sources.
-            self.sources = np.ascontiguousarray(self.callback(*self.extended_mutants[0:6]))
 
     def _get_greens_tensors_key(self, process):
         """

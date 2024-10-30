@@ -13,7 +13,7 @@ def _initialize_mpi_communicator(cmaes_instance):
     cmaes_instance.size = cmaes_instance.comm.Get_size()
 
 def _initialize_logging(cmaes_instance, event_id, verbose_level):
-    """Sets up logging properties like event_id and verbosity level."""
+    """Sets up logging properties like event_id and verbose level."""
     cmaes_instance.event_id = event_id
     cmaes_instance.verbose_level = verbose_level
     if cmaes_instance.rank == 0:
@@ -131,65 +131,123 @@ def _initialize_ipop(cmaes_instance, max_restarts: int = 10, lambda_increase_fac
 
 def _restart_ipop(cmaes_instance):
     """
-    Handles the restart mechanism for the IPOP strategy by increasing the population size
-    and reinitializing CMA-ES parameters.
+    Handles the IPOP restart by increasing the population size and reinitializing necessary attributes.
+    Ensures synchronization across all MPI ranks.
     """
-    if cmaes_instance.current_restarts >= cmaes_instance.max_restarts:
-        if cmaes_instance.rank == 0:
-            print(f"Maximum number of restarts ({cmaes_instance.max_restarts}) reached. Terminating optimization.")
-        raise StopIteration("IPOP-CMA-ES: Maximum restarts reached.")
-
-    # Increase population size
-    new_lambda = int(cmaes_instance.lmbda * cmaes_instance.lambda_increase_factor)
+    # Only rank 0 manages the restart logic
     if cmaes_instance.rank == 0:
-        print(f"Restarting CMA-ES with increased population size: {new_lambda}")
+        if cmaes_instance.current_restarts >= cmaes_instance.max_restarts:
+            print(f"Rank {cmaes_instance.rank}: Maximum number of restarts ({cmaes_instance.max_restarts}) reached. Terminating optimization.")
+            cmaes_instance.ipop_terminated = True
+        else:
+            # Increase lambda by the specified factor
+            new_lambda = int(cmaes_instance.lmbda * cmaes_instance.lambda_increase_factor)
+            print(f"Rank {cmaes_instance.rank}: Restarting CMA-ES with increased population size: {new_lambda}")
+            cmaes_instance.lmbda = new_lambda
+            cmaes_instance.current_restarts += 1
+    else:
+        # Initialize variables on non-zero ranks
+        new_lambda = None
+        cmaes_instance.ipop_terminated = None
+        current_restarts = None
 
-    # Update lambda
+    # Broadcast the termination flag
+    try:
+        cmaes_instance.ipop_terminated = cmaes_instance.comm.bcast(cmaes_instance.ipop_terminated, root=0)
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Received ipop_terminated={cmaes_instance.ipop_terminated}")
+    except Exception as e:
+        print(f"Rank {cmaes_instance.rank}: Error during bcast of ipop_terminated: {e}")
+        cmaes_instance.comm.Abort(1)
+
+    # Broadcast the new_lambda
+    try:
+        new_lambda = cmaes_instance.comm.bcast(cmaes_instance.lmbda if cmaes_instance.rank == 0 else None, root=0)
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Received lambda={new_lambda}")
+    except Exception as e:
+        print(f"Rank {cmaes_instance.rank}: Error during bcast of lambda: {e}")
+        cmaes_instance.comm.Abort(1)
+
+    # Broadcast the current_restarts
+    try:
+        cmaes_instance.current_restarts = cmaes_instance.comm.bcast(cmaes_instance.current_restarts if cmaes_instance.rank == 0 else None, root=0)
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Received current_restarts={cmaes_instance.current_restarts}")
+    except Exception as e:
+        print(f"Rank {cmaes_instance.rank}: Error during bcast of current_restarts: {e}")
+        cmaes_instance.comm.Abort(1)
+
+    # If termination flag is set, do not proceed with restart
+    if cmaes_instance.ipop_terminated:
+        print(f"Rank {cmaes_instance.rank}: Terminating optimization due to maximum restarts.")
+        return
+
+    # Update lambda on all ranks
     cmaes_instance.lmbda = new_lambda
 
-    cmaes_instance._misfit_holder = np.zeros((int(cmaes_instance.lmbda), 1))
+    # Reinitialize misfit_holder based on the new lambda
+    cmaes_instance._misfit_holder = np.zeros((cmaes_instance.lmbda, 1))
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Reinitialized _misfit_holder with shape {cmaes_instance._misfit_holder.shape}")
 
     # Reinitialize CMA-ES parameters
-    cmaes_instance.iteration = 0
-    # cmaes_instance.counteval = 0
     cmaes_instance.mutants = np.zeros((cmaes_instance.n, cmaes_instance.lmbda))
+    cmaes_instance.transformed_mutants = np.zeros((cmaes_instance.n, cmaes_instance.lmbda))
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Reinitialized mutants and transformed_mutants with shape ({cmaes_instance.n}, {cmaes_instance.lmbda})")
 
     # Reset step-size and covariance-related variables
-    restart_from_best = False
+    restart_from_best = False  # Set to True if you want to restart from the best solution
     if restart_from_best:
         cmaes_instance.xmean = np.asarray([cmaes_instance.best_solution.copy()]).T
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Restarting from best_solution.")
     else:
-        # restart at random
+        # Restart at random within the parameter bounds (assuming [0, 10] scaling as per your code)
         cmaes_instance.xmean = np.random.uniform(0, 10, (cmaes_instance.n, 1))
-        
-    cmaes_instance.sigma = 1.67  # You might want to adjust this based on your problem
-    cmaes_instance.B = np.eye(cmaes_instance.n, cmaes_instance.n)
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Restarting with random xmean.")
+
+    cmaes_instance.sigma = 1.67  # Adjust based on your problem
+    cmaes_instance.B = np.eye(cmaes_instance.n)
     cmaes_instance.D = np.ones((cmaes_instance.n, 1))
     cmaes_instance.C = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**2) @ cmaes_instance.B.T
     cmaes_instance.invsqrtC = cmaes_instance.B @ np.diag(cmaes_instance.D[:, 0]**-1) @ cmaes_instance.B.T
     cmaes_instance.ps = np.zeros_like(cmaes_instance.xmean)
     cmaes_instance.pc = np.zeros_like(cmaes_instance.xmean)
     cmaes_instance.eigeneval = 0
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Reset sigma, B, D, C, invsqrtC, ps, pc, and eigenval.")
 
     # Update weights and related parameters based on new lambda
-    cmaes_instance.mu = np.floor(cmaes_instance.lmbda / 2)
+    cmaes_instance.mu = int(np.floor(cmaes_instance.lmbda / 2))
     a = 1  # Use 1 in publication
-    cmaes_instance.weights = np.array([np.log(cmaes_instance.mu + a) - np.log(np.arange(1, cmaes_instance.mu + 1))]).T
-    cmaes_instance.weights /= sum(cmaes_instance.weights)
-    cmaes_instance.mueff = sum(cmaes_instance.weights)**2 / sum(cmaes_instance.weights**2)
+    cmaes_instance.weights = np.log(cmaes_instance.mu + a) - np.log(np.arange(1, cmaes_instance.mu + 1))
+    cmaes_instance.weights /= np.sum(cmaes_instance.weights)
+    cmaes_instance.weights = cmaes_instance.weights.reshape(-1, 1)  # Ensure column vector
+    cmaes_instance.mueff = (np.sum(cmaes_instance.weights))**2 / np.sum(cmaes_instance.weights**2)
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Updated weights and mueff.")
 
     # Step-size control parameters
     cmaes_instance.cs = (cmaes_instance.mueff + 2) / (cmaes_instance.n + cmaes_instance.mueff + 5)
     cmaes_instance.damps = 1 + 2 * max(0, np.sqrt((cmaes_instance.mueff - 1) / (cmaes_instance.n + 1)) - 1) + cmaes_instance.cs
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Updated cs and damps.")
 
     # Covariance matrix adaptation parameters
     cmaes_instance.cc = (4 + cmaes_instance.mueff / cmaes_instance.n) / (cmaes_instance.n + 4 + 2 * cmaes_instance.mueff / cmaes_instance.n)
     cmaes_instance.acov = 2
     cmaes_instance.c1 = cmaes_instance.acov / ((cmaes_instance.n + 1.3)**2 + cmaes_instance.mueff)
-    cmaes_instance.cmu = min(1 - cmaes_instance.c1, cmaes_instance.acov * (cmaes_instance.mueff - 2 + 1 / cmaes_instance.mueff) / ((cmaes_instance.n + 2)**2 + cmaes_instance.acov * cmaes_instance.mueff / 2))
+    cmaes_instance.cmu = min(
+        1 - cmaes_instance.c1,
+        cmaes_instance.acov * (cmaes_instance.mueff - 2 + 1 / cmaes_instance.mueff) / ((cmaes_instance.n + 2)**2 + cmaes_instance.acov * cmaes_instance.mueff / 2)
+    )
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Updated cc, c1, and cmu.")
 
-    cmaes_instance.current_restarts += 1
-    cmaes_instance.no_improve_counter = 0  # Reset patience counter
+    # Reset patience counter
+    cmaes_instance.no_improve_counter = 0
+    if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Reset no_improve_counter.")
+
+    # Synchronize all ranks before proceeding
+    try:
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Waiting at Barrier.")
+        cmaes_instance.comm.Barrier()
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Passed Barrier. Restart complete.")
+    except Exception as e:
+        if cmaes_instance.verbose_level >= 1: print(f"Rank {cmaes_instance.rank}: Error during Barrier: {e}")
+        cmaes_instance.comm.Abort(1)
 
 def _set_default_callback(cmaes_instance):
     """Sets the default callback function based on the parameter names."""
